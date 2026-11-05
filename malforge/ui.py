@@ -7,12 +7,16 @@ from dataclasses import dataclass, field
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFrame,
+                               QInputDialog,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar,
                                QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QTextBrowser,
                                QVBoxLayout, QWidget)
 
-from . import APP_NAME, __version__, updater, wow
+from concurrent.futures import ThreadPoolExecutor
+
+from . import APP_NAME, __version__, curse, updater, wow
 from .catalog import Catalog, Entry, flavor_accepts, norm_version
+from .curse import version_key
 from .icon import app_icon
 from .installer import Manifest, install, uninstall
 
@@ -122,7 +126,9 @@ class MainWindow(QWidget):
         self.queue: list[Row] = []
         self.busy = False
         self.release: updater.Release | None = None
-        self._details: dict[int, dict] = {}
+        self._details: dict[str, dict] = {}
+        self.curse_cache: dict[tuple, Entry | None] = {}   # (projet CurseForge, version du jeu) -> dernière version
+        self._curse_busy = False
 
         self._build()
         self._search_timer = QTimer(self, singleShot=True, interval=180)
@@ -194,6 +200,10 @@ class MainWindow(QWidget):
         self.compat.setChecked(True)
         self.compat.toggled.connect(lambda _: self.populate())
         bar.addWidget(self.compat)
+        self.curse_btn = QPushButton("Lien CurseForge…")
+        self.curse_btn.setToolTip("Installer un add-on à partir du lien de sa page CurseForge")
+        self.curse_btn.clicked.connect(self.add_curse_link)
+        bar.addWidget(self.curse_btn)
         self.refresh_btn = QPushButton("Actualiser")
         self.refresh_btn.clicked.connect(lambda: self.reload(force=True))
         bar.addWidget(self.refresh_btn)
@@ -424,6 +434,7 @@ class MainWindow(QWidget):
 
     def reload(self, force: bool = False):
         if force:
+            self.curse_cache.clear()
             self.load_catalog(force=True)
         else:
             self.rescan()
@@ -438,27 +449,42 @@ class MainWindow(QWidget):
         installed = wow.scan_addons(self.flavor)
         by_folder = {i.folder.lower(): i for i in installed}
         records = self.manifest.records(self.flavor)
-        claimed, rows = set(), []
+        claimed, rows, pending = set(), [], []
         for item in installed:
             if item.folder.lower() in claimed:
                 continue
             entry = self.catalog.match(item.folder, item.wowi_id) if self.catalog_ready else None
             if entry and not flavor_accepts(self.flavor.key, entry.majors):
                 entry = None
-            if entry and str(entry.uid) not in records and entry.uid != item.wowi_id:
+            if entry and entry.key not in records and entry.uid != item.wowi_id:
                 # Rapprochement par simple nom de dossier : on ne propose de mises à jour que si la version
                 # locale est exactement celle du catalogue (sinon c'est peut-être un autre add-on, ou un fork).
                 if norm_version(item.version) and norm_version(item.version) == norm_version(entry.version):
-                    records[str(entry.uid)] = {"version": entry.version, "folders": list(entry.folders), "name": entry.name}
+                    records[entry.key] = {"version": entry.version, "folders": list(entry.folders), "name": entry.name}
                     self.manifest.save()
                 else:
                     entry = None
+            if entry is None and item.curse_id:
+                # Identifiant CurseForge dans le .toc : lien explicite, donc fiable (contrairement à un nom de dossier).
+                cached = self.curse_cache.get((item.curse_id, self.flavor.key), False)
+                if cached is False:
+                    pending.append(item)
+                else:
+                    entry = cached
             if entry:
-                present = [f for f in entry.folders if f.lower() in by_folder] or [item.folder]
+                if entry.source == "curse":
+                    # Le dossier principal, ceux qui portent le même identifiant, et ses modules (Nom_Module).
+                    root = entry.folders[0].lower() if entry.folders else item.folder.lower()
+                    present = [i.folder for i in installed
+                               if i.curse_id == entry.uid or i.folder.lower() == root or i.folder.lower().startswith(root + "_")]
+                    main = by_folder.get(root, item)
+                else:
+                    present = [f for f in entry.folders if f.lower() in by_folder] or [item.folder]
+                    main = by_folder.get(entry.folders[0].lower(), item) if entry.folders else item
                 claimed.update(f.lower() for f in present)
-                main = by_folder.get(entry.folders[0].lower(), item) if entry.folders else item
-                local = (records.get(str(entry.uid)) or {}).get("version") or main.version
-                outdated = bool(norm_version(local)) and norm_version(local) != norm_version(entry.version)
+                local = (records.get(entry.key) or {}).get("version") or main.version
+                same = (version_key if entry.source == "curse" else norm_version)
+                outdated = bool(same(local)) and same(local) != same(entry.version)
                 rows.append(Row(entry.name, local, entry.version, UPDATE if outdated else OK, entry, present, True, main.notes))
             else:
                 claimed.add(item.folder.lower())
@@ -466,6 +492,39 @@ class MainWindow(QWidget):
         rows.sort(key=lambda r: (r.status != UPDATE, r.title.lower()))
         self.rows = rows
         self.populate()
+        if pending and not self._curse_busy:
+            self.fetch_curse(pending)
+
+    def fetch_curse(self, items: list):
+        """Cherche sur CurseForge la dernière version des add-ons qui portent un identifiant de projet."""
+        self._curse_busy = True
+        flavor_key = self.flavor.key
+        by_id: dict[int, wow.Installed] = {}
+        for i in items:
+            by_id.setdefault(i.curse_id, i)   # le premier dossier (ordre alphabétique) est le principal : « Hekili », pas « Hekili_Druid »
+
+        def work():
+            def one(pid):
+                try:
+                    return pid, curse.latest_file(pid, flavor_key), True
+                except Exception:  # noqa: BLE001 - réseau ou site indisponible : on réessaiera à l'actualisation
+                    return pid, None, False
+            with ThreadPoolExecutor(6) as pool:
+                return list(pool.map(one, by_id))
+
+        def done(results):
+            self._curse_busy = False
+            for pid, cf, _ok in results:
+                item = by_id[pid]
+                entry = None
+                if cf is not None:
+                    entry = Entry(uid=pid, name=item.title, author=item.author, version=cf.name, downloads=0, monthly=0,
+                                  url=curse.PAGE_URL.format(pid=pid), folders=[item.folder], majors=[], updated=0,
+                                  source="curse", file_id=cf.id, file_name=cf.file_name, size=cf.size)
+                self.curse_cache[(pid, flavor_key)] = entry
+            self.rescan()
+
+        self.run(work, done=done)
 
     def populate(self):
         text = self.search.text().strip()
@@ -511,6 +570,7 @@ class MainWindow(QWidget):
         self.tab_installed.setText(f"Installés ({len(self.rows)})")
         self.update_all_btn.setText(f"Tout mettre à jour ({n})" if n else "Tout mettre à jour")
         self.compat.setVisible(self.mode == "browse")
+        self.curse_btn.setVisible(self.mode == "browse")
         if self.shown:
             self.table.selectRow(0)
         else:
@@ -555,23 +615,29 @@ class MainWindow(QWidget):
             base += ("\n\n" if base else "") + "Dossiers : " + ", ".join(row.folders)
         self.d_text.setPlainText(base)
         if e:
-            if e.uid in self._details:
-                self.set_description(e.uid, row)
+            if e.key in self._details:
+                self.set_description(e.key, row)
             else:
-                uid = e.uid
-                self.run(lambda: Catalog.details(uid), done=lambda d, u=uid: self.on_details(u, d), failed=lambda _: None)
+                fetch = (lambda uid=e.uid: curse.project_info(uid)) if e.source == "curse" else (lambda uid=e.uid: Catalog.details(uid))
+                self.run(fetch, done=lambda d, k=e.key: self.on_details(k, d), failed=lambda _: None)
         self.refresh_buttons()
 
-    def on_details(self, uid: int, detail: dict):
-        self._details[uid] = detail
+    def on_details(self, key: str, detail: dict):
+        self._details[key] = detail
         row = self.current()
-        if row and row.entry and row.entry.uid == uid:
-            self.set_description(uid, row)
+        if row and row.entry and row.entry.key == key:
+            self.set_description(key, row)
 
-    def set_description(self, uid: int, row: Row):
-        text = str(self._details[uid].get("UIDescription") or "")[:6000]
-        if row.folders:
-            text += "\n\n---\n*Dossiers : " + ", ".join(row.folders) + "*"
+    def set_description(self, key: str, row: Row):
+        detail = self._details[key]
+        folders = ", ".join(row.folders)
+        if row.entry.source == "curse":
+            html = str(detail.get("description") or detail.get("summary") or "")[:8000]
+            self.d_text.setHtml((html or "<i>Pas de description.</i>") + (f"<hr><i>Dossiers : {folders}</i>" if folders else ""))
+            return
+        text = str(detail.get("UIDescription") or "")[:6000]
+        if folders:
+            text += "\n\n---\n*Dossiers : " + folders + "*"
         self.d_text.setMarkdown(text or "*Pas de description.*")
 
     def refresh_buttons(self):
@@ -605,6 +671,41 @@ class MainWindow(QWidget):
             QDesktopServices.openUrl(QUrl(row.entry.url))
 
     # ------------------------------------------------------------------ actions
+    def add_curse_link(self):
+        if not self.flavor or self.busy:
+            return
+        text, ok = QInputDialog.getText(self, "Installer depuis CurseForge",
+                                        "Lien de la page CurseForge (ou identifiant du projet) :")
+        if not ok or not text.strip():
+            return
+        flavor_key = self.flavor.key
+        self.say("Recherche sur CurseForge…")
+        self.set_busy(True)
+
+        def work():
+            pid = curse.resolve(text)
+            cf = curse.latest_file(pid, flavor_key)
+            if cf is None:
+                raise OSError("Aucun fichier compatible avec cette version du jeu.")
+            return pid, cf, curse.project_info(pid)
+
+        def done(result):
+            pid, cf, info = result
+            self.set_busy(False)
+            title = str(info.get("title") or f"Projet {pid}")
+            members = info.get("members") or []
+            entry = Entry(uid=pid, name=title, author=str(members[0].get("username", "")) if members else "",
+                          version=cf.name, downloads=0, monthly=0, url=curse.PAGE_URL.format(pid=pid), folders=[],
+                          majors=[], updated=0, source="curse", file_id=cf.id, file_name=cf.file_name, size=cf.size)
+            ask = QMessageBox.question(self, APP_NAME, f"Installer {title} ({cf.name}) ?")
+            if ask == QMessageBox.StandardButton.Yes:
+                self.queue = [Row(title, "", cf.name, UNTRACKED, entry)]
+                self.next_in_queue()
+            else:
+                self.say("")
+
+        self.run(work, done=done)
+
     def primary_action(self):
         row = self.current()
         if row and row.entry and not self.busy and self.flavor:
@@ -637,8 +738,7 @@ class MainWindow(QWidget):
         ask = QMessageBox.question(self, APP_NAME, f"Supprimer {row.title} ?\n\nDossiers : {', '.join(row.folders)}")
         if ask != QMessageBox.StandardButton.Yes:
             return
-        uid = row.entry.uid if row.entry else 0
-        uninstall(uid, row.folders, self.flavor, self.manifest)
+        uninstall(row.entry.key if row.entry else "", row.folders, self.flavor, self.manifest)
         self.say(f"{row.title} supprimé.")
         self.rescan()
 

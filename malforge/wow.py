@@ -35,6 +35,7 @@ class Installed:
     version: str
     wowi_id: int = 0
     curse_id: int = 0
+    author: str = ""
     notes: str = ""
     deps: list = field(default_factory=list)
 
@@ -146,6 +147,7 @@ def scan_addons(flavor: Flavor) -> list[Installed]:
             version=_clean(meta.get("version", "")),
             wowi_id=_int(meta.get("x-wowi-id", "")),
             curse_id=_int(meta.get("x-curse-project-id", "")),
+            author=_clean(meta.get("author", "")),
             notes=_clean(meta.get("notes", "")),
             deps=deps,
         ))

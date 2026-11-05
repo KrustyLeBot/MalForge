@@ -7,7 +7,7 @@ import tempfile
 import urllib.request
 import zipfile
 
-from . import net
+from . import curse, net
 from .catalog import Catalog, Entry
 from .wow import Flavor
 
@@ -53,11 +53,18 @@ def _safe_extract(archive: zipfile.ZipFile, target: str) -> list[str]:
 
 def install(entry: Entry, flavor: Flavor, manifest: Manifest, progress=None) -> list[str]:
     """Installe (ou met à jour) un add-on dans la version de WoW choisie ; renvoie ses dossiers."""
-    detail = Catalog.details(entry.uid)
-    url, md5 = detail.get("UIDownload"), str(detail.get("UIMD5", "")).lower()
-    if not url:
-        raise OSError("Aucun fichier à télécharger pour cet add-on.")
-    version = str(detail.get("UIVersion", entry.version))
+    size = 0
+    if entry.source == "curse":
+        cf = curse.latest_file(entry.uid, flavor.key)
+        if cf is None:
+            raise OSError("Aucun fichier compatible avec cette version du jeu.")
+        url, md5, version, size = curse.download_url(cf), "", cf.name, cf.size
+    else:
+        detail = Catalog.details(entry.uid)
+        url, md5 = detail.get("UIDownload"), str(detail.get("UIMD5", "")).lower()
+        if not url:
+            raise OSError("Aucun fichier à télécharger pour cet add-on.")
+        version = str(detail.get("UIVersion", entry.version))
 
     addons = flavor.addons_dir
     os.makedirs(addons, exist_ok=True)
@@ -79,6 +86,8 @@ def install(entry: Entry, flavor: Flavor, manifest: Manifest, progress=None) -> 
                     progress(done, total)
         if md5 and digest.hexdigest() != md5:
             raise OSError("Le fichier téléchargé est corrompu (MD5 différent).")
+        if size and done != size:
+            raise OSError(f"Téléchargement incomplet ({done} sur {size} octets).")
 
         extracted = os.path.join(work, "x")
         os.makedirs(extracted)
@@ -108,13 +117,13 @@ def install(entry: Entry, flavor: Flavor, manifest: Manifest, progress=None) -> 
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
-    manifest.records(flavor)[str(entry.uid)] = {"version": version, "folders": folders, "name": entry.name}
+    manifest.records(flavor)[entry.key] = {"version": version, "folders": folders, "name": entry.name}
     manifest.save()
     return folders
 
 
-def uninstall(uid: int, folders: list[str], flavor: Flavor, manifest: Manifest) -> None:
+def uninstall(key: str, folders: list[str], flavor: Flavor, manifest: Manifest) -> None:
     for name in folders:
         shutil.rmtree(os.path.join(flavor.addons_dir, name), ignore_errors=True)
-    manifest.records(flavor).pop(str(uid), None)
+    manifest.records(flavor).pop(key, None)
     manifest.save()

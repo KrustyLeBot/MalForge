@@ -24,6 +24,15 @@ class Entry:
     folders: list
     majors: list      # versions majeures du jeu supportées (11, 4, 1...)
     updated: int      # ms depuis epoch
+    source: str = "wowi"   # "wowi" (WoWInterface) ou "curse" (CurseForge)
+    file_id: int = 0       # CurseForge : fichier à installer
+    file_name: str = ""
+    size: int = 0
+
+    @property
+    def key(self) -> str:
+        """Clé de suivi dans la config : le nombre seul pour WoWInterface, préfixé pour CurseForge."""
+        return f"c{self.uid}" if self.source == "curse" else str(self.uid)
 
 
 def _entry(raw: dict) -> Entry:
