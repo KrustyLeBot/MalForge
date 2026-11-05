@@ -35,6 +35,8 @@ class Installed:
     version: str
     wowi_id: int = 0
     curse_id: int = 0
+    curse_slug: str = ""   # from a curseforge.com/wow/addons/<slug> link in the .toc
+    github: str = ""       # "owner/repo" from X-Github or X-Website
     author: str = ""
     notes: str = ""
     deps: list = field(default_factory=list)
@@ -120,6 +122,16 @@ def _int(text: str) -> int:
     return int(m.group()) if m else 0
 
 
+def _slug(text: str) -> str:
+    m = re.search(r"curseforge\.com/wow/addons/([\w\-]+)", text or "")
+    return m.group(1) if m else ""
+
+
+def _repo(text: str) -> str:
+    m = re.search(r"github\.com/([\w.\-]+)/([\w.\-]+?)(?:\.git)?(?:[/#?]|$)", text or "")
+    return f"{m.group(1)}/{m.group(2)}" if m else ""
+
+
 def scan_addons(flavor: Flavor) -> list[Installed]:
     """The add-ons present in Interface/AddOns (one folder = one entry)."""
     root = flavor.addons_dir
@@ -146,6 +158,8 @@ def scan_addons(flavor: Flavor) -> list[Installed]:
             version=_clean(meta.get("version", "")),
             wowi_id=_int(meta.get("x-wowi-id", "")),
             curse_id=_int(meta.get("x-curse-project-id", "")),
+            curse_slug=_slug(meta.get("x-website", "")),
+            github=_repo(meta.get("x-github", "")) or _repo(meta.get("x-website", "")),
             author=_clean(meta.get("author", "")),
             notes=_clean(meta.get("notes", "")),
             deps=deps,

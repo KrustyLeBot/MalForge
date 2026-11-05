@@ -7,7 +7,7 @@ import tempfile
 import urllib.request
 import zipfile
 
-from . import curse, net
+from . import curse, github, net
 from .catalog import Catalog, Entry
 from .wow import Flavor
 
@@ -54,7 +54,12 @@ def _safe_extract(archive: zipfile.ZipFile, target: str) -> list[str]:
 def install(entry: Entry, flavor: Flavor, manifest: Manifest, progress=None) -> list[str]:
     """Install (or update) an add-on into the chosen WoW version; returns its folders."""
     size = 0
-    if entry.source == "curse":
+    if entry.source == "github":
+        rel = github.latest_release(entry.repo, flavor.key)
+        if rel is None:
+            raise OSError("Ce dépôt GitHub ne publie aucun fichier .zip dans sa dernière release.")
+        url, md5, version, size = rel.url, "", rel.tag, rel.size
+    elif entry.source == "curse":
         cf = curse.latest_file(entry.uid, flavor.key)
         if cf is None:
             raise OSError("Aucun fichier compatible avec cette version du jeu.")

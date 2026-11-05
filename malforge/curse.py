@@ -2,18 +2,18 @@
 
 - file list of a project: the website's public API, by project id;
 - download: CurseForge's public CDN;
-- project info (title, description) and link resolution: cfwidget, a free community service.
+- project info (title, description, downloads) and lookup by page slug: cfwidget, a free community service.
 
-Searching by name is not possible without a key, so an add-on is found by its project id
-(`## X-Curse-Project-ID` in the .toc) or by a link to its page. With a free API key from
-console.curseforge.com the official search endpoint is used as well.
+CurseForge's own search endpoint needs a key and some keys are refused, so a project is found by
+its id (`## X-Curse-Project-ID` in the .toc), by the slug of its page (taken from `## X-Website`, from a
+pasted link, or guessed from the name that was typed in the search box).
 """
 
-import json
 import re
+import unicodedata
 import urllib.error
 import urllib.parse
-import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from . import net
@@ -23,6 +23,7 @@ FILES_URL = "https://www.curseforge.com/api/v1/mods/{pid}/files"
 WIDGET_URL = "https://api.cfwidget.com/{path}"
 CDN_URL = "https://edge.forgecdn.net/files/{a}/{b}/{name}"
 PAGE_URL = "https://www.curseforge.com/projects/{pid}"
+SLUG_RE = re.compile(r"curseforge\.com/wow/addons/([\w\-]+)")
 
 
 @dataclass
@@ -59,45 +60,19 @@ def latest_file(pid: int, flavor_key: str) -> CurseFile | None:
     return max(stable or files, key=lambda f: f.date)
 
 
-SEARCH_URL = "https://api.curseforge.com/v1/mods/search?"
-
-
-def search(api_key: str, text: str, limit: int = 30) -> list:
-    """Search by name through the official API (free key, https://console.curseforge.com). Returns raw dicts."""
-    query = urllib.parse.urlencode({"gameId": 1, "searchFilter": text, "pageSize": limit,
-                                    "sortField": 2, "sortOrder": "desc"})
-    req = urllib.request.Request(SEARCH_URL + query, headers={"x-api-key": api_key, "Accept": "application/json",
-                                                              "User-Agent": net.USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            return json.loads(resp.read().decode("utf-8")).get("data") or []
-    except urllib.error.HTTPError as exc:
-        if exc.code in (401, 403):
-            # Tell a bad key from a valid key that is not allowed to search (CurseForge restricts some keys).
-            if _key_is_valid(api_key):
-                raise OSError("Ta clé est valide, mais CurseForge n'autorise pas la recherche avec cette clé. "
-                              "Utilise « Lien CurseForge… » pour installer un add-on, ou l'identifiant de son .toc.") from exc
-            raise OSError("Clé CurseForge refusée : vérifie qu'elle est bien copiée en entier.") from exc
-        raise
-
-
-def _key_is_valid(api_key: str) -> bool:
-    """True when the key is accepted by a simple endpoint (the WoW game record)."""
-    req = urllib.request.Request("https://api.curseforge.com/v1/games/1",
-                                 headers={"x-api-key": api_key, "Accept": "application/json", "User-Agent": net.USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=15):
-            return True
-    except (urllib.error.URLError, OSError):
-        return False
-
-
 def download_url(f: CurseFile) -> str:
     return CDN_URL.format(a=f.id // 1000, b=f.id % 1000, name=urllib.parse.quote(f.file_name))
 
 
-def project_info(pid: int) -> dict:
-    return net.get_json(WIDGET_URL.format(path=pid), 20)
+def project_info(project) -> dict:
+    """cfwidget record of a project, given its id or a path such as "wow/addons/centerstage"."""
+    return net.get_json(WIDGET_URL.format(path=project), 20)
+
+
+def slug_of(text: str) -> str:
+    """The page slug in a CurseForge add-on link, or an empty string."""
+    m = SLUG_RE.search(text or "")
+    return m.group(1) if m else ""
 
 
 def resolve(text: str) -> int:
@@ -105,13 +80,41 @@ def resolve(text: str) -> int:
     text = text.strip()
     if text.isdigit():
         return int(text)
-    m = re.search(r"curseforge\.com/wow/addons/([\w\-]+)", text)
-    if not m:
+    slug = slug_of(text)
+    if not slug:
         raise OSError("Lien CurseForge non reconnu (attendu : curseforge.com/wow/addons/nom).")
-    return int(net.get_json(WIDGET_URL.format(path=f"wow/addons/{m.group(1)}"), 20)["id"])
+    return int(project_info(f"wow/addons/{slug}")["id"])
 
 
 def version_key(text: str) -> str:
     """The version number inside a label ("Auctionator 341", "v0.5.0-forever" -> "0.5.0")."""
     m = re.search(r"\d+(?:\.\d+)*", text or "")
     return m.group() if m else (text or "").strip().lower()
+
+
+def slug_candidates(query: str) -> list[str]:
+    """Page slugs a typed name may correspond to: "Hekili Forever" -> hekili-forever, hekiliforever, hekili."""
+    plain = unicodedata.normalize("NFKD", query).encode("ascii", "ignore").decode().lower()
+    words = re.findall(r"[a-z0-9]+", plain)
+    if not words:
+        return []
+    out = ["-".join(words), "".join(words)]
+    if len(words) > 1 and len(words[0]) >= 3:
+        out.append(words[0])
+    return list(dict.fromkeys(out))
+
+
+def find_by_name(query: str) -> list[dict]:
+    """cfwidget records of the projects whose page slug matches the typed name (misses are skipped silently)."""
+    def one(slug: str):
+        try:
+            return project_info(f"wow/addons/{slug}")
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+
+    slugs = slug_candidates(query)
+    if not slugs:
+        return []
+    with ThreadPoolExecutor(len(slugs)) as pool:
+        found = [info for info in pool.map(one, slugs) if info and info.get("id")]
+    return list({info["id"]: info for info in found}.values())

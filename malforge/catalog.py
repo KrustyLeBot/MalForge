@@ -24,7 +24,8 @@ class Entry:
     folders: list
     majors: list      # supported game major versions (11, 4, 1...)
     updated: int      # ms since epoch
-    source: str = "wowi"   # "wowi" (WoWInterface) or "curse" (CurseForge)
+    source: str = "wowi"   # "wowi" (WoWInterface), "curse" (CurseForge) or "github"
+    repo: str = ""         # GitHub: "owner/repo"
     file_id: int = 0       # CurseForge: file to install
     file_name: str = ""
     size: int = 0
@@ -32,6 +33,8 @@ class Entry:
     @property
     def key(self) -> str:
         """Tracking key in the config: the bare number for WoWInterface, prefixed for CurseForge."""
+        if self.source == "github":
+            return f"g:{self.repo}"
         return f"c{self.uid}" if self.source == "curse" else str(self.uid)
 
 

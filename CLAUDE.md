@@ -12,16 +12,19 @@ Only what the user sees in the interface (labels, messages, dialogs, tooltips) i
   folder the user picked, and reads installed add-ons in `Interface/AddOns` (`.toc` files). Several folders can be saved.
 - `malforge/catalog.py`: public WoWInterface catalog (`api.mmoui.com`, no key), cached 6 h in `%APPDATA%\MalForge`.
   Searched locally; it runs only on Enter or on the search button, never while typing.
-- `malforge/curse.py`: CurseForge without a key (website file list, public CDN, cfwidget for info) plus the official
-  search API when the user saved a free key.
+- `malforge/curse.py`: CurseForge without a key: website file list, public CDN, cfwidget for project info and for
+  finding a project from the typed name (slug guesses like `hekili-forever`). CurseForge's own search API is not used
+  (needs a key; some keys get 403 on it).
+- `malforge/github.py`: latest GitHub release of a repo and the zip that fits the game version (BigWigs `release.json`).
 - `malforge/installer.py`: download, MD5/size check, safe extraction, replacement with rollback, tracking of installs
   in `%APPDATA%\MalForge\config.json`.
 - `malforge/updater.py`: self-update from the latest GitHub release (SHA-256 checked, in-place replacement).
 - `malforge/ui.py`: the window. `malforge/icon.py`: the logo, drawn in code.
 
 ## Matching rules
-An update is offered only for an add-on installed by MalForgé, linked by `## X-WoWI-ID`, linked by
-`## X-Curse-Project-ID`, or whose local version equals the catalog's. A folder name alone is not enough
+An update is offered only for an add-on installed by MalForgé, linked by `## X-WoWI-ID`, `## X-Curse-Project-ID`,
+a curseforge.com/wow/addons/<slug> link, or a GitHub repo link in `## X-Website` / `## X-Github`, or whose local
+version equals the catalog's. A folder name alone is not enough
 (forks and look-alike add-ons).
 
 ## Release (CI only, never locally)

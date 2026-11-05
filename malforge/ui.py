@@ -1,7 +1,6 @@
 """MalForgé main window. Code and comments are in English; only what the user sees is French."""
 
 import os
-import re
 import sys
 from dataclasses import dataclass, field
 
@@ -15,7 +14,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
 
 from concurrent.futures import ThreadPoolExecutor
 
-from . import APP_NAME, __version__, curse, updater, wow
+from . import APP_NAME, __version__, curse, github, updater, wow
 from .catalog import Catalog, Entry, flavor_accepts, norm_version
 from .curse import version_key
 from .icon import app_icon, make_image
@@ -128,9 +127,9 @@ class MainWindow(QWidget):
         self.busy = False
         self.release: updater.Release | None = None
         self._details: dict[str, dict] = {}
-        self.curse_cache: dict[tuple, Entry | None] = {}   # (CurseForge project, game version) -> latest version
-        self._curse_busy = False
-        self.curse_hits: list[Entry] = []   # CurseForge search results (API key)
+        self.remote_cache: dict[tuple, Entry | None] = {}   # ((kind, id), game version) -> latest Entry or None
+        self._remote_busy = False
+        self.curse_hits: list[Entry] = []   # CurseForge matches for the submitted search
         self.curse_query = ""
         self.query = ""                   # last submitted catalog search
         self._texts = {"installed": "", "browse": ""}   # search box content, kept per tab
@@ -231,14 +230,10 @@ class MainWindow(QWidget):
         self.compat.setChecked(True)
         self.compat.toggled.connect(lambda _: self.populate())
         bar.addWidget(self.compat)
-        self.curse_btn = QPushButton("Lien CurseForge…")
-        self.curse_btn.setToolTip("Installer un add-on à partir du lien de sa page CurseForge")
+        self.curse_btn = QPushButton("Lien CurseForge / GitHub…")
+        self.curse_btn.setToolTip("Installer un add-on à partir du lien de sa page CurseForge ou de son dépôt GitHub")
         self.curse_btn.clicked.connect(self.add_curse_link)
         bar.addWidget(self.curse_btn)
-        self.key_btn = QPushButton("")
-        self.key_btn.clicked.connect(self.set_curse_key)
-        bar.addWidget(self.key_btn)
-        self.refresh_key_button()
         self.refresh_btn = QPushButton("Actualiser")
         self.refresh_btn.clicked.connect(lambda: self.reload(force=True))
         bar.addWidget(self.refresh_btn)
@@ -471,7 +466,7 @@ class MainWindow(QWidget):
 
     def reload(self, force: bool = False):
         if force:
-            self.curse_cache.clear()
+            self.remote_cache.clear()
             self.load_catalog(force=True)
         else:
             self.rescan()
@@ -501,26 +496,30 @@ class MainWindow(QWidget):
                     self.manifest.save()
                 else:
                     entry = None
-            if entry is None and item.curse_id:
-                # CurseForge project id in the .toc: an explicit link, so reliable (unlike a folder name).
-                cached = self.curse_cache.get((item.curse_id, self.flavor.key), False)
-                if cached is False:
-                    pending.append(item)
-                else:
-                    entry = cached
+            if entry is None:
+                # A CurseForge id or page, or a GitHub repo, named in the .toc: an explicit link, so reliable
+                # (unlike a folder name).
+                ref = self._remote_ref(item)
+                if ref:
+                    cached = self.remote_cache.get((ref, self.flavor.key), False)
+                    if cached is False:
+                        pending.append((ref, item))
+                    else:
+                        entry = cached
             if entry:
-                if entry.source == "curse":
+                if entry.source == "wowi":
+                    present = [f for f in entry.folders if f.lower() in by_folder] or [item.folder]
+                    main = by_folder.get(entry.folders[0].lower(), item) if entry.folders else item
+                else:
                     # The main folder, those carrying the same id, and its modules (Name_Module).
                     root = entry.folders[0].lower() if entry.folders else item.folder.lower()
                     present = [i.folder for i in installed
-                               if i.curse_id == entry.uid or i.folder.lower() == root or i.folder.lower().startswith(root + "_")]
+                               if i.folder.lower() == root or i.folder.lower().startswith(root + "_")
+                               or (entry.source == "curse" and entry.uid and i.curse_id == entry.uid)]
                     main = by_folder.get(root, item)
-                else:
-                    present = [f for f in entry.folders if f.lower() in by_folder] or [item.folder]
-                    main = by_folder.get(entry.folders[0].lower(), item) if entry.folders else item
                 claimed.update(f.lower() for f in present)
                 local = (records.get(entry.key) or {}).get("version") or main.version
-                same = (version_key if entry.source == "curse" else norm_version)
+                same = norm_version if entry.source == "wowi" else version_key
                 outdated = bool(same(local)) and same(local) != same(entry.version)
                 rows.append(Row(entry.name, local, entry.version, UPDATE if outdated else OK, entry, present, True, main.notes))
             else:
@@ -529,36 +528,56 @@ class MainWindow(QWidget):
         rows.sort(key=lambda r: (r.status != UPDATE, r.title.lower()))
         self.rows = rows
         self.populate()
-        if pending and not self._curse_busy:
-            self.fetch_curse(pending)
+        if pending and not self._remote_busy:
+            self.fetch_remote(pending)
 
-    def fetch_curse(self, items: list):
-        """Look up the latest CurseForge version of every add-on that carries a project id."""
-        self._curse_busy = True
+    @staticmethod
+    def _remote_ref(item):
+        """Where to look an installed add-on up, from the links in its .toc: CurseForge id, CurseForge slug or GitHub."""
+        if item.curse_id:
+            return ("c", item.curse_id)
+        if item.curse_slug:
+            return ("s", item.curse_slug)
+        if item.github:
+            return ("g", item.github)
+        return None
+
+    def fetch_remote(self, pending: list):
+        """Look up, in the background, the latest version of add-ons linked to CurseForge or GitHub."""
+        self._remote_busy = True
         flavor_key = self.flavor.key
-        by_id: dict[int, wow.Installed] = {}
-        for i in items:
-            by_id.setdefault(i.curse_id, i)   # first folder (alphabetical) is the main one: "Hekili", not "Hekili_Druid"
+        refs: dict = {}
+        for ref, item in pending:
+            refs.setdefault(ref, item)   # first folder (alphabetical) is the main one: "Hekili", not "Hekili_Druid"
+
+        def one(ref):
+            kind, value = ref
+            item = refs[ref]
+            base = dict(name=item.title, author=item.author, downloads=0, monthly=0, folders=[item.folder], majors=[], updated=0)
+            try:
+                if kind == "g":
+                    rel = github.latest_release(value, flavor_key)
+                    if rel is None:
+                        return ref, None
+                    return ref, Entry(uid=0, version=rel.tag, url=f"https://github.com/{value}", source="github",
+                                      repo=value, file_name=rel.asset_name, size=rel.size, **base)
+                pid = value if kind == "c" else int(curse.project_info(f"wow/addons/{value}")["id"])
+                cf = curse.latest_file(pid, flavor_key)
+                if cf is None:
+                    return ref, None
+                return ref, Entry(uid=pid, version=cf.name, url=curse.PAGE_URL.format(pid=pid), source="curse",
+                                  file_id=cf.id, file_name=cf.file_name, size=cf.size, **base)
+            except Exception:  # noqa: BLE001 - network or site down: retried on refresh
+                return ref, None
 
         def work():
-            def one(pid):
-                try:
-                    return pid, curse.latest_file(pid, flavor_key), True
-                except Exception:  # noqa: BLE001 - network or site down: retried on refresh
-                    return pid, None, False
             with ThreadPoolExecutor(6) as pool:
-                return list(pool.map(one, by_id))
+                return list(pool.map(one, refs))
 
         def done(results):
-            self._curse_busy = False
-            for pid, cf, _ok in results:
-                item = by_id[pid]
-                entry = None
-                if cf is not None:
-                    entry = Entry(uid=pid, name=item.title, author=item.author, version=cf.name, downloads=0, monthly=0,
-                                  url=curse.PAGE_URL.format(pid=pid), folders=[item.folder], majors=[], updated=0,
-                                  source="curse", file_id=cf.id, file_name=cf.file_name, size=cf.size)
-                self.curse_cache[(pid, flavor_key)] = entry
+            self._remote_busy = False
+            for ref, entry in results:
+                self.remote_cache[(ref, flavor_key)] = entry
             self.rescan()
 
         self.run(work, done=done)
@@ -617,7 +636,6 @@ class MainWindow(QWidget):
         self.compat.setVisible(self.mode == "browse")
         self.curse_btn.setVisible(self.mode == "browse")
         self.search_btn.setVisible(self.mode == "browse")
-        self.key_btn.setVisible(self.mode == "browse")
         if self.shown:
             self.table.selectRow(0)
         else:
@@ -665,7 +683,9 @@ class MainWindow(QWidget):
         if row.folders:
             base += ("\n\n" if base else "") + "Dossiers : " + ", ".join(row.folders)
         self.d_text.setPlainText(base)
-        if e:
+        if e and e.source == "github":
+            self.d_text.setPlainText(f"Dépôt GitHub : https://github.com/{e.repo}" + ("\n\n" + base if base else ""))
+        elif e:
             if e.key in self._details:
                 self.set_description(e.key, row)
             else:
@@ -723,100 +743,78 @@ class MainWindow(QWidget):
 
     # ------------------------------------------------------------------ actions
     def run_search(self):
-        """Search the catalog for what is typed in the box (Enter or the button); nothing runs while typing."""
+        """Search the catalogs for what is typed in the box (Enter or the button); nothing runs while typing."""
         if self.mode != "browse":
             return
         self.query = self.search.text().strip()
         self.populate()
-        text, key = self.query, self.manifest.get("curse_key", "")
-        if not key or len(text) < 2 or text == self.curse_query:
+        text = self.query
+        if len(text) < 2 or text == self.curse_query:
             return
         self.say("Recherche sur CurseForge…")
 
-        def done(results):
+        def done(infos):
             if self.query != text:
                 return  # a newer search replaced this one
-            try:
-                hits = [self._curse_entry(m) for m in results]
-            except (KeyError, TypeError, ValueError) as exc:
-                self.say(f"Réponse CurseForge illisible : {exc}")
-                return
-            self.curse_hits, self.curse_query = hits, text
+            self.curse_hits = [self._widget_entry(i) for i in infos]
+            self.curse_query = text
             self.populate()
-            self.say(f"CurseForge : {len(hits)} résultat(s) pour « {text} ».")
+            if self.curse_hits:
+                self.say(f"CurseForge : {len(self.curse_hits)} correspondance(s) pour « {text} ».")
+            else:
+                self.say(f"Rien de plus sur CurseForge pour « {text} ». Essaie le nom exact de la page, ou « Lien CurseForge / GitHub… ».")
 
-        def failed(msg: str):
-            self.say(msg)
-            self.notify(f"La recherche CurseForge a échoué.\n\n{msg}")
-
-        self.run(lambda: curse.search(key, text), done=done, failed=failed)
+        self.run(lambda: curse.find_by_name(text), done=done, failed=lambda msg: self.say(msg))
 
     @staticmethod
-    def _curse_entry(m: dict) -> Entry:
-        files = m.get("latestFiles") or []
-        majors = sorted({n for f in files for n in curse._majors(f.get("gameVersions"))})
-        authors = m.get("authors") or []
-        return Entry(uid=int(m["id"]), name=str(m.get("name", "")),
-                     author=str(authors[0].get("name", "")) if authors else "",
-                     version=str(files[0].get("displayName", "")) if files else "",
-                     downloads=int(m.get("downloadCount") or 0), monthly=0,
-                     url=str((m.get("links") or {}).get("websiteUrl") or curse.PAGE_URL.format(pid=m["id"])),
-                     folders=[], majors=majors, updated=0, source="curse")
-
-    def set_curse_key(self):
-        current = self.manifest.get("curse_key", "")
-        text, ok = QInputDialog.getText(
-            self, "Clé API CurseForge",
-            "Colle ta clé gratuite (console.curseforge.com → API keys).\nElle est gardée sur cet ordinateur seulement.\n"
-            "Laisse vide pour la retirer.", QLineEdit.EchoMode.Password, current)
-        if not ok:
-            return
-        if re.fullmatch(r"[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", text.strip()):
-            # A UUID is an upload/author token from the CurseForge account page, not a Core API key.
-            QMessageBox.warning(self, APP_NAME, "Ce texte est un jeton d'envoi de fichiers, pas une clé d'API.\n\n"
-                                "Crée la clé sur console.curseforge.com (menu « API keys ») : elle commence par $2a$10$.")
-            return
-        self.manifest.set("curse_key", text.strip())
-        self.curse_hits, self.curse_query = [], ""
-        self.refresh_key_button()
-        self.say("Clé CurseForge enregistrée : lance une recherche pour inclure CurseForge." if text.strip() else "Clé CurseForge retirée.")
-        self.populate()
-
-    def refresh_key_button(self):
-        has = bool(self.manifest.get("curse_key", ""))
-        self.key_btn.setText("Clé CurseForge ✓" if has else "Clé CurseForge…")
-        self.key_btn.setToolTip("Recherche CurseForge activée. Cliquer pour changer ou retirer la clé." if has else
-                                "Ajoute une clé API gratuite pour chercher aussi sur CurseForge.")
+    def _widget_entry(info: dict) -> Entry:
+        """A search entry from a cfwidget project record."""
+        files = info.get("files") or []
+        stable = next((f for f in files if f.get("type") == "release"), None) or (files[0] if files else {})
+        members = info.get("members") or []
+        downloads = info.get("downloads") or {}
+        return Entry(uid=int(info["id"]), name=str(info.get("title", "")),
+                     author=str(members[0].get("username", "")) if members else "",
+                     version=str(stable.get("display") or stable.get("name") or ""),
+                     downloads=int(downloads.get("total") or 0), monthly=int(downloads.get("monthly") or 0),
+                     url=str((info.get("urls") or {}).get("curseforge") or curse.PAGE_URL.format(pid=info["id"])),
+                     folders=[], majors=[], updated=0, source="curse")
 
     def add_curse_link(self):
+        """Install an add-on from the link of its CurseForge page or of its GitHub repository."""
         if not self.flavor or self.busy:
             return
-        text, ok = QInputDialog.getText(self, "Installer depuis CurseForge",
-                                        "Lien de la page CurseForge (ou identifiant du projet) :")
+        text, ok = QInputDialog.getText(self, "Installer depuis un lien",
+                                        "Lien de la page CurseForge ou du dépôt GitHub (ou identifiant CurseForge) :")
         if not ok or not text.strip():
             return
         flavor_key = self.flavor.key
-        self.say("Recherche sur CurseForge…")
+        repo = github.parse_repo(text)
+        self.say("Recherche de l'add-on…")
         self.set_busy(True)
 
         def work():
+            if repo:
+                rel = github.latest_release(repo, flavor_key)
+                if rel is None:
+                    raise OSError("Ce dépôt ne publie aucun fichier .zip dans sa dernière release.")
+                return Entry(uid=0, name=repo.split("/")[1], author=repo.split("/")[0], version=rel.tag, downloads=0,
+                             monthly=0, url=f"https://github.com/{repo}", folders=[], majors=[], updated=0,
+                             source="github", repo=repo, file_name=rel.asset_name, size=rel.size)
             pid = curse.resolve(text)
             cf = curse.latest_file(pid, flavor_key)
             if cf is None:
                 raise OSError("Aucun fichier compatible avec cette version du jeu.")
-            return pid, cf, curse.project_info(pid)
+            info = curse.project_info(pid)
+            return Entry(uid=pid, name=str(info.get("title") or f"Projet {pid}"), author="", version=cf.name,
+                         downloads=0, monthly=0, url=curse.PAGE_URL.format(pid=pid), folders=[], majors=[], updated=0,
+                         source="curse", file_id=cf.id, file_name=cf.file_name, size=cf.size)
 
-        def done(result):
-            pid, cf, info = result
+        def done(entry):
             self.set_busy(False)
-            title = str(info.get("title") or f"Projet {pid}")
-            members = info.get("members") or []
-            entry = Entry(uid=pid, name=title, author=str(members[0].get("username", "")) if members else "",
-                          version=cf.name, downloads=0, monthly=0, url=curse.PAGE_URL.format(pid=pid), folders=[],
-                          majors=[], updated=0, source="curse", file_id=cf.id, file_name=cf.file_name, size=cf.size)
-            ask = QMessageBox.question(self, APP_NAME, f"Installer {title} ({cf.name}) ?")
+            ask = QMessageBox.question(self, APP_NAME, f"Installer {entry.name} ({entry.version}) ?")
             if ask == QMessageBox.StandardButton.Yes:
-                self.queue = [Row(title, "", cf.name, UNTRACKED, entry)]
+                self.queue = [Row(entry.name, "", entry.version, UNTRACKED, entry)]
                 self.next_in_queue()
             else:
                 self.say("")
