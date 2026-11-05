@@ -724,7 +724,11 @@ class MainWindow(QWidget):
             self.populate()
             self.say(f"CurseForge : {len(hits)} résultat(s) pour « {text} ».")
 
-        self.run(lambda: curse.search(key, text), done=done, failed=lambda msg: self.say(msg))
+        def failed(msg: str):
+            self.say(msg)
+            QMessageBox.warning(self, APP_NAME, f"La recherche CurseForge a échoué.\n\n{msg}")
+
+        self.run(lambda: curse.search(key, text), done=done, failed=failed)
 
     @staticmethod
     def _curse_entry(m: dict) -> Entry:
