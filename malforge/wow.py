@@ -21,6 +21,7 @@ class Flavor:
     key: str          # nom du dossier, ex. "_retail_"
     label: str        # nom lisible
     path: str         # dossier de la version (contient Interface)
+    root: str = ""    # dossier choisi par l'utilisateur, d'où vient cette version
 
     @property
     def addons_dir(self) -> str:
@@ -55,6 +56,7 @@ def detect_flavors(selected: str) -> list[Flavor]:
     Interface / AddOns directement.
     """
     path = os.path.abspath(selected)
+    root = path
     if not os.path.isdir(path):
         return []
     # Remonte depuis AddOns / Interface vers le dossier de version.
@@ -63,7 +65,7 @@ def detect_flavors(selected: str) -> list[Flavor]:
             path = os.path.dirname(path)
     base = os.path.basename(path)
     if re.fullmatch(r"_[^_].*_", base):
-        return [Flavor(base, _label(base), path)]
+        return [Flavor(base, _label(base), path, root)]
     found = []
     try:
         names = sorted(os.listdir(path))
@@ -72,7 +74,7 @@ def detect_flavors(selected: str) -> list[Flavor]:
     for name in names:
         full = os.path.join(path, name)
         if re.fullmatch(r"_[^_].*_", name) and os.path.isdir(full):
-            found.append(Flavor(name, _label(name), full))
+            found.append(Flavor(name, _label(name), full, root))
     # Ordre : retail d'abord, le reste alphabétique.
     found.sort(key=lambda f: (f.key != "_retail_", f.label))
     return found

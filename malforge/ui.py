@@ -113,6 +113,7 @@ class MainWindow(QWidget):
         self.catalog = Catalog()
         self.catalog_ready = False
         self.manifest = Manifest()
+        self.paths: list[str] = []
         self.flavors: list[wow.Flavor] = []
         self.flavor: wow.Flavor | None = None
         self.rows: list[Row] = []          # add-ons installés
@@ -146,11 +147,17 @@ class MainWindow(QWidget):
         head.addLayout(titles)
         head.addStretch()
         self.flavor_box = QComboBox()
-        self.flavor_box.setMinimumWidth(150)
+        self.flavor_box.setMinimumWidth(190)
+        self.flavor_box.setMaximumWidth(460)
         self.flavor_box.currentIndexChanged.connect(self.on_flavor)
-        self.path_btn = QPushButton("Choisir le dossier WoW")
+        self.path_btn = QPushButton("+ Ajouter un dossier WoW")
         self.path_btn.clicked.connect(self.choose_folder)
+        self.remove_btn = QPushButton("Retirer")
+        self.remove_btn.setToolTip("Oublier le dossier de cette installation (rien n'est supprimé sur le disque)")
+        self.remove_btn.clicked.connect(self.remove_folder)
+        self.remove_btn.hide()
         head.addWidget(self.flavor_box)
+        head.addWidget(self.remove_btn)
         head.addWidget(self.path_btn)
         root.addLayout(head)
 
@@ -306,14 +313,7 @@ class MainWindow(QWidget):
             self._cleanup_timer.start()
         self.run(updater.check, done=self.on_release, failed=lambda _: None)
 
-        saved = self.manifest.get("wow_path", "")
-        if not saved:
-            found = wow.common_locations()
-            saved = found[0] if found else ""
-        if saved:
-            self.load_folder(saved, self.manifest.get("flavor", ""))
-        else:
-            self.say("Choisis ton dossier World of Warcraft pour commencer.")
+        self.set_paths(self.saved_paths(), "")
         self.load_catalog()
 
     def on_release(self, release):
@@ -362,41 +362,64 @@ class MainWindow(QWidget):
         self.run(lambda: self.catalog.load(force), done=done)
 
     # ------------------------------------------------------------------ dossier / version du jeu
-    def choose_folder(self):
-        start = self.manifest.get("wow_path", "") or (wow.common_locations() or [""])[0]
-        path = QFileDialog.getExistingDirectory(self, "Dossier de World of Warcraft", start)
-        if path:
-            self.load_folder(path, "")
+    def saved_paths(self) -> list[str]:
+        paths = list(self.manifest.get("wow_paths") or [])
+        old = self.manifest.get("wow_path", "")  # ancien réglage à un seul dossier
+        if old and old not in paths:
+            paths.append(old)
+        return paths or wow.common_locations()[:1]
 
-    def load_folder(self, path: str, prefer: str):
-        flavors = wow.detect_flavors(path)
-        if not flavors:
+    def choose_folder(self):
+        """Ajoute un dossier WoW à la liste ; toutes les installations restent disponibles dans la liste déroulante."""
+        start = (self.paths[-1] if self.paths else "") or (wow.common_locations() or [""])[0]
+        path = QFileDialog.getExistingDirectory(self, "Ajouter un dossier World of Warcraft", start)
+        if not path:
+            return
+        found = wow.detect_flavors(path)
+        if not found:
             QMessageBox.warning(self, APP_NAME, "Aucune version de WoW trouvée dans ce dossier.\n"
                                 "Choisis le dossier qui contient _retail_, _classic_…")
             return
+        self.set_paths(self.paths + [os.path.abspath(path)], found[0].path)
+
+    def remove_folder(self):
+        if self.flavor and self.flavor.root in self.paths:
+            self.set_paths([p for p in self.paths if p != self.flavor.root], "")
+
+    def set_paths(self, paths: list[str], prefer: str):
+        self.paths = [p for p in dict.fromkeys(paths) if os.path.isdir(p)]
+        self.manifest.set("wow_paths", self.paths)
+        seen, flavors = set(), []
+        for p in self.paths:
+            for f in wow.detect_flavors(p):
+                if f.path.lower() not in seen:
+                    seen.add(f.path.lower())
+                    flavors.append(f)
         self.flavors = flavors
-        root = path
-        if len(flavors) == 1 and os.path.basename(flavors[0].path) == os.path.basename(os.path.abspath(path)):
-            root = os.path.abspath(path)
-        self.manifest.set("wow_path", root)
-        self.path_btn.setText(root if len(root) < 46 else "…" + root[-44:])
-        self.path_btn.setToolTip(root)
+        multi = len({f.root for f in flavors}) > 1
         self.flavor_box.blockSignals(True)
         self.flavor_box.clear()
         for f in flavors:
-            self.flavor_box.addItem(f.label, f.key)
-        index = next((i for i, f in enumerate(flavors) if f.key == prefer), 0)
-        self.flavor_box.setCurrentIndex(index)
+            self.flavor_box.addItem(f"{f.label}  ·  {f.root}" if multi else f.label, f.path)
+        prefer = prefer or self.manifest.get("flavor_path", "")
+        index = next((i for i, f in enumerate(flavors) if f.path == prefer), 0)
+        self.flavor_box.setCurrentIndex(index if flavors else -1)
         self.flavor_box.blockSignals(False)
-        self.flavor_box.setVisible(len(flavors) > 1 or True)
-        self.on_flavor()
+        self.remove_btn.setVisible(bool(flavors))
+        if not flavors:
+            self.flavor = None
+            self.say("Ajoute ton dossier World of Warcraft pour commencer.")
+            self.rescan()
+        else:
+            self.on_flavor()
 
     def on_flavor(self):
         i = self.flavor_box.currentIndex()
         if i < 0 or i >= len(self.flavors):
             return
         self.flavor = self.flavors[i]
-        self.manifest.set("flavor", self.flavor.key)
+        self.manifest.set("flavor_path", self.flavor.path)
+        self.flavor_box.setToolTip(self.flavor.path)
         self.rescan()
 
     def reload(self, force: bool = False):
