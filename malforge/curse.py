@@ -73,8 +73,23 @@ def search(api_key: str, text: str, limit: int = 30) -> list:
             return json.loads(resp.read().decode("utf-8")).get("data") or []
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
+            # Tell a bad key from a valid key that is not allowed to search (CurseForge restricts some keys).
+            if _key_is_valid(api_key):
+                raise OSError("Ta clé est valide, mais CurseForge n'autorise pas la recherche avec cette clé. "
+                              "Utilise « Lien CurseForge… » pour installer un add-on, ou l'identifiant de son .toc.") from exc
             raise OSError("Clé CurseForge refusée : vérifie qu'elle est bien copiée en entier.") from exc
         raise
+
+
+def _key_is_valid(api_key: str) -> bool:
+    """True when the key is accepted by a simple endpoint (the WoW game record)."""
+    req = urllib.request.Request("https://api.curseforge.com/v1/games/1",
+                                 headers={"x-api-key": api_key, "Accept": "application/json", "User-Agent": net.USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=15):
+            return True
+    except (urllib.error.URLError, OSError):
+        return False
 
 
 def download_url(f: CurseFile) -> str:

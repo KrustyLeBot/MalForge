@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFrame,
                                QInputDialog,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar,
@@ -111,8 +111,7 @@ class MainWindow(QWidget):
         self.setObjectName("root")
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.setWindowIcon(app_icon())
-        self.resize(1120, 700)
-        self.setMinimumSize(860, 540)
+        self.setMinimumSize(1120, 620)
 
         self.pool = QThreadPool.globalInstance()
         self._tasks: set[Task] = set()
@@ -137,9 +136,30 @@ class MainWindow(QWidget):
         self._texts = {"installed": "", "browse": ""}   # search box content, kept per tab
 
         self._build()
+        self._fit_to_screen()
         self._search_timer = QTimer(self, singleShot=True, interval=180)
         self._search_timer.timeout.connect(self.populate)
         QTimer.singleShot(0, self.start)
+
+    def _fit_to_screen(self):
+        """Open large enough to show everything, never bigger than the screen; remember the last size."""
+        avail = QGuiApplication.primaryScreen().availableGeometry()
+        saved = self.manifest.get("window_size")
+        w, h = (int(saved[0]), int(saved[1])) if isinstance(saved, list) and len(saved) == 2 else (1360, 860)
+        w = max(self.minimumWidth(), min(w, int(avail.width() * 0.95)))
+        h = max(self.minimumHeight(), min(h, int(avail.height() * 0.92)))
+        self.resize(w, h)
+        self.move(avail.center() - self.rect().center())
+
+    def closeEvent(self, event):
+        self.manifest.set("window_size", [self.width(), self.height()])
+        super().closeEvent(event)
+
+    def notify(self, text: str):
+        """Non-blocking warning: a modal loop started from inside a signal handler can make the window hang."""
+        box = QMessageBox(QMessageBox.Icon.Warning, APP_NAME, text, QMessageBox.StandardButton.Ok, self)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.open()
 
     # ------------------------------------------------------------------ interface
     def _build(self):
@@ -727,7 +747,7 @@ class MainWindow(QWidget):
 
         def failed(msg: str):
             self.say(msg)
-            QMessageBox.warning(self, APP_NAME, f"La recherche CurseForge a échoué.\n\n{msg}")
+            self.notify(f"La recherche CurseForge a échoué.\n\n{msg}")
 
         self.run(lambda: curse.search(key, text), done=done, failed=failed)
 

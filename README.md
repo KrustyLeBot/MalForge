@@ -7,7 +7,7 @@ The interface is in French; the code, comments and docs are in English.
 - It lists your installed add-ons and flags the ones that have an update.
 - Search the WoWInterface catalog, install and update in one click.
 - Add-ons that carry a CurseForge project id are tracked on CurseForge too, and any CurseForge page link can be installed.
-- Optional free CurseForge API key to search CurseForge by name.
+- Optional free CurseForge API key to search CurseForge by name (CurseForge may refuse search for some keys; links and .toc ids always work).
 - It updates itself.
 
 Download `MalForge.exe` from the [latest release](../../releases/latest).
