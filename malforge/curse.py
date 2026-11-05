@@ -8,8 +8,11 @@ La recherche par nom n'existe pas sans clé : on retrouve donc un add-on par son
 (`## X-Curse-Project-ID` du .toc) ou par un lien de sa page.
 """
 
+import json
 import re
+import urllib.error
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 
 from . import net
@@ -53,6 +56,24 @@ def latest_file(pid: int, flavor_key: str) -> CurseFile | None:
         return None
     stable = [f for f in files if f.release == 1]
     return max(stable or files, key=lambda f: f.date)
+
+
+SEARCH_URL = "https://api.curseforge.com/v1/mods/search?"
+
+
+def search(api_key: str, text: str, limit: int = 30) -> list:
+    """Recherche par nom via l'API officielle (clé gratuite, https://console.curseforge.com). Liste de dicts bruts."""
+    query = urllib.parse.urlencode({"gameId": 1, "classId": 1, "searchFilter": text, "pageSize": limit,
+                                    "sortField": 2, "sortOrder": "desc"})
+    req = urllib.request.Request(SEARCH_URL + query, headers={"x-api-key": api_key, "Accept": "application/json",
+                                                              "User-Agent": net.USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("data") or []
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise OSError("Clé CurseForge refusée : vérifie qu'elle est bien copiée en entier.") from exc
+        raise
 
 
 def download_url(f: CurseFile) -> str:

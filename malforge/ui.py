@@ -5,7 +5,7 @@ import sys
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFrame,
                                QInputDialog,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar,
@@ -17,53 +17,54 @@ from concurrent.futures import ThreadPoolExecutor
 from . import APP_NAME, __version__, curse, updater, wow
 from .catalog import Catalog, Entry, flavor_accepts, norm_version
 from .curse import version_key
-from .icon import app_icon
+from .icon import app_icon, make_image
 from .installer import Manifest, install, uninstall
 
 STYLE = """
-* { font-family: "Segoe UI"; font-size: 13px; color: #ece6dd; }
-QWidget#root, QMainWindow { background: #14110f; }
-QLabel#title { font-size: 22px; font-weight: 700; color: #f39a4a; }
-QLabel#sub, QLabel#muted { color: #8f867b; }
+* { font-family: "Segoe UI"; font-size: 13px; color: #e9e4dc; }
+QWidget#root, QMainWindow { background: #151311; }
+QLabel#wordmark { font-family: "Bahnschrift SemiBold Condensed", "Bahnschrift", "Segoe UI"; font-size: 30px; font-weight: 700; }
+QLabel#muted { color: #a89f94; }
 QLabel#h2 { font-size: 18px; font-weight: 600; }
-QFrame#banner { background: #3a2514; border: 1px solid #f39a4a; border-radius: 8px; }
-QLineEdit, QComboBox { background: #1d1915; border: 1px solid #332c25; border-radius: 8px; padding: 7px 10px;
-    selection-background-color: #f39a4a; }
-QLineEdit:focus, QComboBox:focus { border-color: #f39a4a; }
+QFrame#banner { background: #2a2018; border: none; border-radius: 4px; }
+QLineEdit, QComboBox { background: #1d1a17; border: 1px solid #3a342e; border-radius: 4px; padding: 6px 10px;
+    selection-background-color: #f26a21; }
+QLineEdit:focus, QComboBox:focus { border-color: #f26a21; }
 QComboBox::drop-down { border: none; width: 22px; }
-QComboBox QAbstractItemView { background: #1d1915; border: 1px solid #332c25; selection-background-color: #3a2514; }
-QPushButton { background: #26211b; border: 1px solid #332c25; border-radius: 8px; padding: 7px 14px; }
-QPushButton:hover { border-color: #f39a4a; }
-QPushButton:disabled { color: #5d564e; border-color: #26211b; }
-QPushButton#primary { background: #f39a4a; border-color: #f39a4a; color: #1a1109; font-weight: 600; }
-QPushButton#primary:hover { background: #ffad63; }
-QPushButton#primary:disabled { background: #3a3027; border-color: #3a3027; color: #7a6f63; }
-QPushButton#danger:hover { border-color: #e5484d; color: #ff8084; }
+QComboBox QAbstractItemView { background: #1d1a17; border: 1px solid #3a342e; selection-background-color: #2f2217; }
+QPushButton { background: transparent; border: 1px solid #3a342e; border-radius: 4px; padding: 6px 14px; }
+QPushButton:hover { border-color: #f26a21; }
+QPushButton:disabled { color: #655d54; border-color: #2c2722; }
+QPushButton#primary { background: #f26a21; border-color: #f26a21; color: #17110d; font-weight: 600; }
+QPushButton#primary:hover { background: #ff7f3d; border-color: #ff7f3d; }
+QPushButton#primary:disabled { background: #2c2722; border-color: #2c2722; color: #7a6f63; }
+QPushButton#danger { color: #ff9a8f; }
+QPushButton#danger:hover { border-color: #e5484d; }
 QPushButton#tab { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0;
-    padding: 8px 16px; color: #8f867b; font-weight: 600; }
-QPushButton#tab:checked { color: #f39a4a; border-bottom-color: #f39a4a; }
-QPushButton#tab:hover { color: #ece6dd; }
-QTableWidget { background: #1a1612; alternate-background-color: #1d1915; border: 1px solid #26211b;
-    border-radius: 8px; gridline-color: transparent; outline: none; }
-QTableWidget::item { padding: 5px 8px; border: none; }
-QTableWidget::item:selected { background: #3a2514; color: #ffffff; }
-QHeaderView::section { background: #14110f; color: #8f867b; border: none; border-bottom: 1px solid #26211b;
+    padding: 7px 12px; color: #a89f94; font-weight: 600; }
+QPushButton#tab:checked { color: #ffa261; border-bottom-color: #f26a21; }
+QPushButton#tab:hover { color: #e9e4dc; }
+QTableWidget { background: transparent; alternate-background-color: transparent; border: none;
+    border-top: 1px solid #3a342e; gridline-color: transparent; outline: none; }
+QTableWidget::item { padding: 4px 8px; border-bottom: 1px solid #221e1a; }
+QTableWidget::item:selected { background: #2f2217; color: #ffffff; }
+QHeaderView::section { background: #151311; color: #a89f94; border: none; border-bottom: 1px solid #2c2722;
     padding: 6px 8px; font-weight: 600; }
-QTextBrowser { background: #1a1612; border: 1px solid #26211b; border-radius: 8px; padding: 6px; }
-QProgressBar { background: #26211b; border: none; border-radius: 3px; max-height: 6px; }
-QProgressBar::chunk { background: #f39a4a; border-radius: 3px; }
-QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px; border: 1px solid #4a4036; background: #1d1915; }
-QCheckBox::indicator:checked { background: #f39a4a; border-color: #f39a4a; }
+QTextBrowser { background: transparent; border: none; border-top: 1px solid #3a342e; padding: 6px 0; }
+QProgressBar { background: #2c2722; border: none; border-radius: 2px; max-height: 4px; }
+QProgressBar::chunk { background: #f26a21; border-radius: 2px; }
+QCheckBox::indicator { width: 15px; height: 15px; border-radius: 3px; border: 1px solid #4a4238; background: #1d1a17; }
+QCheckBox::indicator:checked { background: #f26a21; border-color: #f26a21; }
 QScrollBar:vertical { background: transparent; width: 10px; }
-QScrollBar::handle:vertical { background: #3a3027; border-radius: 5px; min-height: 30px; }
+QScrollBar::handle:vertical { background: #3a342e; border-radius: 3px; min-height: 30px; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
 QSplitter::handle { background: transparent; }
-QToolTip { background: #26211b; color: #ece6dd; border: 1px solid #f39a4a; }
+QToolTip { background: #1d1a17; color: #e9e4dc; border: 1px solid #f26a21; }
 """
 
 OK, UPDATE, UNTRACKED = "ok", "update", "untracked"
 STATUS_TEXT = {OK: "À jour", UPDATE: "Mise à jour", UNTRACKED: "Non suivi"}
-STATUS_COLOR = {OK: "#7fb08a", UPDATE: "#f39a4a", UNTRACKED: "#8f867b"}
+STATUS_COLOR = {OK: "#86c496", UPDATE: "#ffa261", UNTRACKED: "#a89f94"}
 
 
 @dataclass
@@ -129,10 +130,12 @@ class MainWindow(QWidget):
         self._details: dict[str, dict] = {}
         self.curse_cache: dict[tuple, Entry | None] = {}   # (projet CurseForge, version du jeu) -> dernière version
         self._curse_busy = False
+        self.curse_hits: list[Entry] = []   # résultats de la recherche CurseForge (clé API)
+        self.curse_query = ""
 
         self._build()
         self._search_timer = QTimer(self, singleShot=True, interval=180)
-        self._search_timer.timeout.connect(self.populate)
+        self._search_timer.timeout.connect(self.on_search)
         QTimer.singleShot(0, self.start)
 
     # ------------------------------------------------------------------ interface
@@ -142,15 +145,15 @@ class MainWindow(QWidget):
         root.setSpacing(10)
 
         head = QHBoxLayout()
-        titles = QVBoxLayout()
-        titles.setSpacing(0)
-        t = QLabel(APP_NAME)
-        t.setObjectName("title")
-        s = QLabel("Tes add-ons WoW, sans compte, sans pub.")
-        s.setObjectName("sub")
-        titles.addWidget(t)
-        titles.addWidget(s)
-        head.addLayout(titles)
+        logo = QLabel()
+        logo.setPixmap(QPixmap.fromImage(make_image(160)).scaled(
+            40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        mark = QLabel("MAL<span style='color:#f26a21'>FORGÉ</span>")
+        mark.setObjectName("wordmark")
+        mark.setTextFormat(Qt.TextFormat.RichText)
+        head.addWidget(logo)
+        head.addSpacing(4)
+        head.addWidget(mark)
         head.addStretch()
         self.flavor_box = QComboBox()
         self.flavor_box.setMinimumWidth(190)
@@ -204,6 +207,10 @@ class MainWindow(QWidget):
         self.curse_btn.setToolTip("Installer un add-on à partir du lien de sa page CurseForge")
         self.curse_btn.clicked.connect(self.add_curse_link)
         bar.addWidget(self.curse_btn)
+        self.key_btn = QPushButton("")
+        self.key_btn.clicked.connect(self.set_curse_key)
+        bar.addWidget(self.key_btn)
+        self.refresh_key_button()
         self.refresh_btn = QPushButton("Actualiser")
         self.refresh_btn.clicked.connect(lambda: self.reload(force=True))
         bar.addWidget(self.refresh_btn)
@@ -221,6 +228,8 @@ class MainWindow(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.verticalHeader().hide()
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.table.horizontalHeader().setHighlightSections(False)
         self.table.verticalHeader().setDefaultSectionSize(34)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.itemSelectionChanged.connect(self.on_select)
@@ -530,7 +539,7 @@ class MainWindow(QWidget):
         text = self.search.text().strip()
         self.table.setUpdatesEnabled(False)
         self.table.clearContents()
-        installed_uids = {r.entry.uid: r for r in self.rows if r.entry}
+        installed_uids = {r.entry.key: r for r in self.rows if r.entry}
         if self.mode == "installed":
             words = text.lower().split()
             self.shown = [r for r in self.rows if all(w in f"{r.title} {' '.join(r.folders)}".lower() for w in words)]
@@ -539,8 +548,15 @@ class MainWindow(QWidget):
             if not self.catalog_ready:
                 self.shown = []
             else:
-                found = self.catalog.search(text, self.flavor.key if self.flavor else "", self.compat.isChecked())
-                self.shown = [installed_uids.get(e.uid) or Row(e.name, "", e.version, UNTRACKED, e) for e in found]
+                fkey = self.flavor.key if self.flavor else ""
+                found = self.catalog.search(text, fkey, self.compat.isChecked())
+                if self.curse_query == text and self.curse_hits:
+                    # Résultats CurseForge (clé API) mêlés à ceux de WoWInterface, sans doublon de nom.
+                    names = {e.name.lower() for e in found}
+                    extra = [e for e in self.curse_hits if e.name.lower() not in names
+                             and (not self.compat.isChecked() or flavor_accepts(fkey, e.majors))]
+                    found = sorted(found + extra, key=lambda e: -e.downloads)
+                self.shown = [installed_uids.get(e.key) or Row(e.name, "", e.version, UNTRACKED, e) for e in found]
             heads = ["Add-on", "Auteur", "Version", "Téléchargements"]
         self.table.setHorizontalHeaderLabels(heads)
         self.table.setRowCount(len(self.shown))
@@ -571,6 +587,7 @@ class MainWindow(QWidget):
         self.update_all_btn.setText(f"Tout mettre à jour ({n})" if n else "Tout mettre à jour")
         self.compat.setVisible(self.mode == "browse")
         self.curse_btn.setVisible(self.mode == "browse")
+        self.key_btn.setVisible(self.mode == "browse")
         if self.shown:
             self.table.selectRow(0)
         else:
@@ -671,6 +688,53 @@ class MainWindow(QWidget):
             QDesktopServices.openUrl(QUrl(row.entry.url))
 
     # ------------------------------------------------------------------ actions
+    def on_search(self):
+        self.populate()
+        text = self.search.text().strip()
+        key = self.manifest.get("curse_key", "")
+        if self.mode != "browse" or not key or len(text) < 2 or text == self.curse_query:
+            return
+
+        def done(results):
+            if self.search.text().strip() != text:
+                return  # la recherche a changé entre-temps
+            hits = []
+            for m in results:
+                files = m.get("latestFiles") or []
+                majors = sorted({n for f in files for n in curse._majors(f.get("gameVersions"))})
+                authors = m.get("authors") or []
+                hits.append(Entry(uid=int(m["id"]), name=str(m.get("name", "")),
+                                  author=str(authors[0].get("name", "")) if authors else "",
+                                  version=str(files[0].get("displayName", "")) if files else "",
+                                  downloads=int(m.get("downloadCount") or 0), monthly=0,
+                                  url=str((m.get("links") or {}).get("websiteUrl") or curse.PAGE_URL.format(pid=m["id"])),
+                                  folders=[], majors=majors, updated=0, source="curse"))
+            self.curse_hits, self.curse_query = hits, text
+            self.populate()
+
+        self.run(lambda: curse.search(key, text), done=done, failed=lambda msg: self.say(msg))
+
+    def set_curse_key(self):
+        current = self.manifest.get("curse_key", "")
+        text, ok = QInputDialog.getText(
+            self, "Clé API CurseForge",
+            "Colle ta clé gratuite (console.curseforge.com → API keys).\nElle est gardée sur cet ordinateur seulement.\n"
+            "Laisse vide pour la retirer.", QLineEdit.EchoMode.Password, current)
+        if not ok:
+            return
+        self.manifest.set("curse_key", text.strip())
+        self.curse_hits, self.curse_query = [], ""
+        self.refresh_key_button()
+        self.say("Clé CurseForge enregistrée : la recherche inclut CurseForge." if text.strip() else "Clé CurseForge retirée.")
+        self.populate()
+        self.on_search()
+
+    def refresh_key_button(self):
+        has = bool(self.manifest.get("curse_key", ""))
+        self.key_btn.setText("Clé CurseForge ✓" if has else "Clé CurseForge…")
+        self.key_btn.setToolTip("Recherche CurseForge activée. Cliquer pour changer ou retirer la clé." if has else
+                                "Ajoute une clé API gratuite pour chercher aussi sur CurseForge.")
+
     def add_curse_link(self):
         if not self.flavor or self.busy:
             return
