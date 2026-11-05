@@ -1,6 +1,7 @@
 """MalForgé main window. Code and comments are in English; only what the user sees is French."""
 
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 
@@ -749,6 +750,11 @@ class MainWindow(QWidget):
             "Colle ta clé gratuite (console.curseforge.com → API keys).\nElle est gardée sur cet ordinateur seulement.\n"
             "Laisse vide pour la retirer.", QLineEdit.EchoMode.Password, current)
         if not ok:
+            return
+        if re.fullmatch(r"[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", text.strip()):
+            # A UUID is an upload/author token from the CurseForge account page, not a Core API key.
+            QMessageBox.warning(self, APP_NAME, "Ce texte est un jeton d'envoi de fichiers, pas une clé d'API.\n\n"
+                                "Crée la clé sur console.curseforge.com (menu « API keys ») : elle commence par $2a$10$.")
             return
         self.manifest.set("curse_key", text.strip())
         self.curse_hits, self.curse_query = [], ""
