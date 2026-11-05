@@ -1,4 +1,4 @@
-"""Auto-mise à jour : lit la dernière release GitHub (publiée par la CI), vérifie le SHA-256 et remplace l'exe en place."""
+"""Self-update: read the latest GitHub release (published by the CI), verify its SHA-256 and replace the exe in place."""
 
 import hashlib
 import os
@@ -40,7 +40,7 @@ def is_newer(remote: str, local: str = __version__) -> bool:
 def fetch_release(timeout: int = 15) -> Release:
     data = net.get_json(API_LATEST, timeout)
     asset = next(a for a in data["assets"] if a["name"] == EXE_ASSET)
-    # GitHub publie le SHA-256 de chaque fichier ("sha256:...") ; sinon on retombe sur l'asset .sha256 de la CI.
+    # GitHub publishes each file's SHA-256 ("sha256:..."); otherwise fall back to the CI's .sha256 asset.
     sha = str(asset.get("digest") or "").removeprefix("sha256:").lower()
     if not re.fullmatch(r"[0-9a-f]{64}", sha):
         side = next((a for a in data["assets"] if a["name"] == EXE_ASSET + ".sha256"), None)
@@ -50,19 +50,19 @@ def fetch_release(timeout: int = 15) -> Release:
 
 
 def check() -> Release | None:
-    """La dernière release si elle est plus récente que cette version, sinon None."""
+    """The latest release if it is newer than this build, else None."""
     release = fetch_release()
     return release if is_newer(release.version) else None
 
 
 def running_exe() -> str | None:
-    """Chemin de MalForge.exe en cours d'exécution, ou None depuis les sources."""
+    """Path of the running MalForge.exe, or None when running from source."""
     return sys.executable if getattr(sys, "frozen", False) else None
 
 
 def download(release: Release, progress=None) -> str:
     exe = running_exe()
-    # Même disque que l'exe : os.replace ne sait pas changer de lecteur.
+    # Same drive as the exe: os.replace cannot move a file across drives.
     folder = os.path.dirname(os.path.abspath(exe)) if exe else tempfile.gettempdir()
     target = os.path.join(folder, f"MalForge-{release.version}.exe.download")
     req = urllib.request.Request(release.url, headers={"User-Agent": net.USER_AGENT})
@@ -78,7 +78,7 @@ def download(release: Release, progress=None) -> str:
             done += len(chunk)
             if progress:
                 progress(done, total)
-    # Un téléchargement tronqué ou modifié ne doit jamais remplacer un exe qui marche.
+    # A truncated or tampered download must never replace a working exe.
     if release.size and done != release.size:
         os.remove(target)
         raise OSError(f"Téléchargement incomplet ({done} sur {release.size} octets)")
@@ -89,7 +89,7 @@ def download(release: Release, progress=None) -> str:
 
 
 def install(current_exe: str, new_file: str) -> str:
-    """Remplace l'exe (même en cours d'exécution) : Windows interdit l'écrasement mais autorise le renommage."""
+    """Replace the exe, even while it runs: Windows refuses to overwrite it but allows renaming it."""
     old = current_exe + ".old"
     if os.path.exists(old):
         os.remove(old)
@@ -103,8 +103,8 @@ def install(current_exe: str, new_file: str) -> str:
 
 
 def relaunch(exe: str) -> None:
-    # Un exe onefile lancé par un autre hérite des variables du bootloader et chercherait ses fichiers dans
-    # le dossier temporaire du parent, supprimé à sa sortie ; la remise à zéro force sa propre extraction.
+    # A onefile exe started by another one inherits its bootloader variables and would look for its files in
+    # the parent's temp folder, deleted when the parent exits; the reset makes it unpack its own.
     env = {k: v for k, v in os.environ.items() if not k.startswith(("_PYI", "_MEIPASS"))}
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
@@ -112,7 +112,7 @@ def relaunch(exe: str) -> None:
 
 
 def cleanup_previous(exe: str | None = None) -> bool:
-    """Supprime l'ancien exe laissé par la dernière mise à jour ; True quand il ne reste plus rien."""
+    """Remove the exe left behind by the last self-update; True once nothing is left."""
     exe = exe or running_exe()
     old = exe + ".old" if exe else ""
     if not old or not os.path.exists(old):

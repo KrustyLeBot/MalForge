@@ -1,4 +1,4 @@
-"""Petits utilitaires réseau et stockage partagés."""
+"""Small network and storage helpers shared by the other modules."""
 
 import json
 import os

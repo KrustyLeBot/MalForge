@@ -1,4 +1,4 @@
-"""Téléchargement, vérification et installation des add-ons, avec suivi de ce qui a été installé."""
+"""Download, verify and install add-ons, and keep track of what was installed."""
 
 import hashlib
 import os
@@ -13,7 +13,7 @@ from .wow import Flavor
 
 
 class Manifest:
-    """Ce que MalForgé a installé : uid -> version et dossiers, par dossier AddOns."""
+    """What MalForgé installed: key -> version and folders, per AddOns folder."""
 
     def __init__(self):
         self.path = os.path.join(net.app_data_dir(), "config.json")
@@ -34,7 +34,7 @@ class Manifest:
 
 
 def _safe_extract(archive: zipfile.ZipFile, target: str) -> list[str]:
-    """Extrait en refusant les chemins qui sortent du dossier ; renvoie les dossiers de premier niveau."""
+    """Extract while refusing paths that escape the folder; returns the top-level folders."""
     root = os.path.realpath(target)
     tops = set()
     for info in archive.infolist():
@@ -52,7 +52,7 @@ def _safe_extract(archive: zipfile.ZipFile, target: str) -> list[str]:
 
 
 def install(entry: Entry, flavor: Flavor, manifest: Manifest, progress=None) -> list[str]:
-    """Installe (ou met à jour) un add-on dans la version de WoW choisie ; renvoie ses dossiers."""
+    """Install (or update) an add-on into the chosen WoW version; returns its folders."""
     size = 0
     if entry.source == "curse":
         cf = curse.latest_file(entry.uid, flavor.key)
@@ -68,7 +68,7 @@ def install(entry: Entry, flavor: Flavor, manifest: Manifest, progress=None) -> 
 
     addons = flavor.addons_dir
     os.makedirs(addons, exist_ok=True)
-    work = tempfile.mkdtemp(prefix=".malforge-", dir=os.path.dirname(addons))  # même disque : déplacement instantané
+    work = tempfile.mkdtemp(prefix=".malforge-", dir=os.path.dirname(addons))  # same drive: moves are instant
     try:
         zpath = os.path.join(work, "addon.zip")
         req = urllib.request.Request(url, headers={"User-Agent": net.USER_AGENT})
@@ -96,7 +96,7 @@ def install(entry: Entry, flavor: Flavor, manifest: Manifest, progress=None) -> 
         if not folders:
             raise OSError("L'archive ne contient aucun dossier d'add-on.")
 
-        # Remplace les dossiers un par un ; en cas d'échec on remet les anciens.
+        # Replace folders one by one; on failure the old ones are put back.
         backups = []
         try:
             for name in folders:

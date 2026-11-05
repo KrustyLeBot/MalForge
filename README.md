@@ -1,12 +1,32 @@
 # MalForgé
 
-Un gestionnaire d'add-ons World of Warcraft simple : pas de compte, pas de pub, un seul `.exe`.
+A simple World of Warcraft add-on manager: no account, no ads, a single `.exe`.
+The interface is in French; the code, comments and docs are in English.
 
-- Choisis ton dossier WoW : MalForgé détecte Retail, Classic, Classic Era, Forever…
-- Il liste tes add-ons installés et ceux qui ont une mise à jour.
-- Recherche dans le catalogue WoWInterface, installation et mise à jour en un clic.
-- Se met à jour tout seul.
+- Pick your WoW folder (as many as you like): MalForgé detects Retail, Classic, Classic Era, Forever...
+- It lists your installed add-ons and flags the ones that have an update.
+- Search the WoWInterface catalog, install and update in one click.
+- Add-ons that carry a CurseForge project id are tracked on CurseForge too, and any CurseForge page link can be installed.
+- Optional free CurseForge API key to search CurseForge by name.
+- It updates itself.
 
-Télécharge `MalForge.exe` dans les [Releases](../../releases/latest).
+Download `MalForge.exe` from the [latest release](../../releases/latest).
 
-Les add-ons viennent de WoWInterface. CurseForge n'est pas supporté (son API demande une clé).
+## Sources
+
+| Source | Needs an account/key? | Used for |
+|---|---|---|
+| WoWInterface (`api.mmoui.com`) | no | browsing and searching the catalog, installing, updating |
+| CurseForge website + CDN | no | updating and installing add-ons whose `.toc` has `## X-Curse-Project-ID`, or from a page link |
+| CurseForge API | free key (optional) | searching CurseForge by name |
+
+## Develop
+
+```
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python main.py
+```
+
+Releases are built by the CI only (see `.github/workflows/release.yml`): bump `__version__` in
+`malforge/__init__.py` and push to `main`.

@@ -1,4 +1,4 @@
-"""Logo de MalForgé (hexagone, enclume fêlée, étincelles), dessiné en code : rien à embarquer."""
+"""MalForgé logo (hexagon, cracked anvil, sparks) drawn in code: no image file to ship."""
 
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF

@@ -1,4 +1,4 @@
-"""Écrit build/icon.ico (icône de l'exe) à partir du dessin de malforge/icon.py. Lancé par la CI."""
+"""Write build/icon.ico (the exe icon) from the drawing in malforge/icon.py. Run by the CI."""
 import os
 import sys
 from pathlib import Path
@@ -15,5 +15,5 @@ app = QGuiApplication([])
 out = root / "build"
 out.mkdir(exist_ok=True)
 if not make_image(256).save(str(out / "icon.ico")):
-    raise SystemExit("Impossible d'écrire icon.ico")
+    raise SystemExit("Could not write icon.ico")
 print("build/icon.ico")

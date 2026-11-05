@@ -1,28 +1,36 @@
 # MalForgé
 
-Gestionnaire d'add-ons World of Warcraft (alternative à CurseForge), Python + PySide6, sans compte.
-Nom de l'app : **MalForgé** (avec accent). Repo, paquet et exe : **MalForge** (sans accent). On travaille uniquement sur `main`.
+World of Warcraft add-on manager (a CurseForge alternative), Python + PySide6, no account needed.
+App name: **MalForgé** (with the accent). Repo, package and exe: **MalForge** (no accent). Work on `main` only.
 
-## Fonctionnement
-- `malforge/wow.py` : détecte les versions du jeu (`_retail_`, `_classic_`, `_classic_era_`, `_forever_`, ...) depuis le
-  dossier choisi, et lit les add-ons installés dans `Interface/AddOns` (fichiers `.toc`).
-- `malforge/catalog.py` : catalogue public WoWInterface (`api.mmoui.com`, sans clé), mis en cache 6 h dans `%APPDATA%\MalForge`.
-- `malforge/installer.py` : téléchargement, vérif MD5, extraction sécurisée, remplacement avec retour arrière,
-  suivi des installations dans `%APPDATA%\MalForge\config.json`.
-- `malforge/updater.py` : auto-update de l'exe depuis la dernière release GitHub (SHA-256 vérifié, remplacement en place).
-- `malforge/ui.py` : la fenêtre. `malforge/icon.py` : l'icône dessinée en code.
+## Language rule
+Code, comments, docstrings, commit messages, README and this file are in **English**.
+Only what the user sees in the interface (labels, messages, dialogs, tooltips) is **French**.
 
-## Règles de rapprochement
-Une mise à jour n'est proposée que pour un add-on installé par MalForgé, ou lié par `## X-WoWI-ID` dans le .toc,
-ou dont la version locale est identique à celle du catalogue. Un simple nom de dossier identique ne suffit pas
-(forks et add-ons homonymes). Pas de CurseForge : son API exige une clé.
+## How it works
+- `malforge/wow.py`: detects game versions (`_retail_`, `_classic_`, `_classic_era_`, `_forever_`, ...) from the
+  folder the user picked, and reads installed add-ons in `Interface/AddOns` (`.toc` files). Several folders can be saved.
+- `malforge/catalog.py`: public WoWInterface catalog (`api.mmoui.com`, no key), cached 6 h in `%APPDATA%\MalForge`.
+  Searched locally; it runs only on Enter or on the search button, never while typing.
+- `malforge/curse.py`: CurseForge without a key (website file list, public CDN, cfwidget for info) plus the official
+  search API when the user saved a free key.
+- `malforge/installer.py`: download, MD5/size check, safe extraction, replacement with rollback, tracking of installs
+  in `%APPDATA%\MalForge\config.json`.
+- `malforge/updater.py`: self-update from the latest GitHub release (SHA-256 checked, in-place replacement).
+- `malforge/ui.py`: the window. `malforge/icon.py`: the logo, drawn in code.
 
-## Release (CI uniquement, jamais en local)
-Pour publier : augmenter `__version__` dans `malforge/__init__.py`, push sur `main`.
-`.github/workflows/release.yml` construit `MalForge.exe` (PyInstaller, onefile) et crée la release `vX.Y.Z`
-avec `MalForge.exe` et `MalForge.exe.sha256`. Si la release existe déjà, rien n'est refait.
+## Matching rules
+An update is offered only for an add-on installed by MalForgé, linked by `## X-WoWI-ID`, linked by
+`## X-Curse-Project-ID`, or whose local version equals the catalog's. A folder name alone is not enough
+(forks and look-alike add-ons).
 
-## Lancer en local
+## Release (CI only, never locally)
+To publish: raise `__version__` in `malforge/__init__.py`, push to `main`. `.github/workflows/release.yml` builds
+`MalForge.exe` (PyInstaller, onefile) and creates the release `vX.Y.Z` with `MalForge.exe` and `MalForge.exe.sha256`.
+If the release already exists nothing is rebuilt. A local build is only for testing:
+`python -m PyInstaller --onefile --windowed --name MalForge --icon build/icon.ico main.py` (run `tools/make_icon.py` first).
+
+## Run locally
 ```
 python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python main.py

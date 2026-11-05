@@ -1,4 +1,4 @@
-"""Fenêtre principale de MalForgé."""
+"""MalForgé main window. Code and comments are in English; only what the user sees is French."""
 
 import os
 import sys
@@ -74,7 +74,7 @@ class Row:
     latest: str = ""
     status: str = UNTRACKED
     entry: Entry | None = None
-    folders: list = field(default_factory=list)   # dossiers présents dans AddOns
+    folders: list = field(default_factory=list)   # folders present in AddOns
     installed: bool = False
     notes: str = ""
 
@@ -94,7 +94,7 @@ class Task(QRunnable):
     def run(self):
         try:
             result = self.fn(self.signals.progress.emit) if self.with_progress else self.fn()
-        except Exception as exc:  # noqa: BLE001 - affiché tel quel à l'utilisateur
+        except Exception as exc:  # noqa: BLE001 - shown as is to the user
             self.signals.failed.emit(str(exc) or exc.__class__.__name__)
             return
         self.signals.done.emit(result)
@@ -121,21 +121,23 @@ class MainWindow(QWidget):
         self.paths: list[str] = []
         self.flavors: list[wow.Flavor] = []
         self.flavor: wow.Flavor | None = None
-        self.rows: list[Row] = []          # add-ons installés
-        self.shown: list[Row] = []         # lignes affichées dans le tableau
+        self.rows: list[Row] = []          # installed add-ons
+        self.shown: list[Row] = []         # rows shown in the table
         self.mode = "installed"
         self.queue: list[Row] = []
         self.busy = False
         self.release: updater.Release | None = None
         self._details: dict[str, dict] = {}
-        self.curse_cache: dict[tuple, Entry | None] = {}   # (projet CurseForge, version du jeu) -> dernière version
+        self.curse_cache: dict[tuple, Entry | None] = {}   # (CurseForge project, game version) -> latest version
         self._curse_busy = False
-        self.curse_hits: list[Entry] = []   # résultats de la recherche CurseForge (clé API)
+        self.curse_hits: list[Entry] = []   # CurseForge search results (API key)
         self.curse_query = ""
+        self.query = ""                   # last submitted catalog search
+        self._texts = {"installed": "", "browse": ""}   # search box content, kept per tab
 
         self._build()
         self._search_timer = QTimer(self, singleShot=True, interval=180)
-        self._search_timer.timeout.connect(self.on_search)
+        self._search_timer.timeout.connect(self.populate)
         QTimer.singleShot(0, self.start)
 
     # ------------------------------------------------------------------ interface
@@ -197,8 +199,13 @@ class MainWindow(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Rechercher un add-on…")
         self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(lambda _: self._search_timer.start())
+        self.search.textChanged.connect(lambda _: self._search_timer.start() if self.mode == "installed" else None)
+        self.search.returnPressed.connect(self.run_search)
         bar.addWidget(self.search, 1)
+        self.search_btn = QPushButton("Rechercher")
+        self.search_btn.setObjectName("primary")
+        self.search_btn.clicked.connect(self.run_search)
+        bar.addWidget(self.search_btn)
         self.compat = QCheckBox("Compatibles uniquement")
         self.compat.setChecked(True)
         self.compat.toggled.connect(lambda _: self.populate())
@@ -284,7 +291,7 @@ class MainWindow(QWidget):
         self.setStyleSheet(STYLE)
         self.show_detail(None)
 
-    # ------------------------------------------------------------------ tâches
+    # ------------------------------------------------------------------ background tasks
     def run(self, fn, done=None, failed=None, progress=None):
         task = Task(fn, with_progress=progress is not None)
         self._tasks.add(task)
@@ -323,10 +330,10 @@ class MainWindow(QWidget):
         else:
             self.progress.setRange(0, 0)
 
-    # ------------------------------------------------------------------ démarrage
+    # ------------------------------------------------------------------ startup
     def start(self):
         updater.cleanup_previous()
-        if updater.running_exe():  # l'ancien exe n'est libéré que quelques secondes après le relancement
+        if updater.running_exe():  # the old exe is only released a few seconds after the relaunch
             self._cleanup_timer = QTimer(self, interval=1000)
             self._cleanup_timer.timeout.connect(lambda: self._cleanup_timer.stop() if updater.cleanup_previous() else None)
             self._cleanup_timer.start()
@@ -380,16 +387,16 @@ class MainWindow(QWidget):
 
         self.run(lambda: self.catalog.load(force), done=done)
 
-    # ------------------------------------------------------------------ dossier / version du jeu
+    # ------------------------------------------------------------------ WoW folders / game versions
     def saved_paths(self) -> list[str]:
         paths = list(self.manifest.get("wow_paths") or [])
-        old = self.manifest.get("wow_path", "")  # ancien réglage à un seul dossier
+        old = self.manifest.get("wow_path", "")  # legacy single-folder setting
         if old and old not in paths:
             paths.append(old)
         return paths or wow.common_locations()[:1]
 
     def choose_folder(self):
-        """Ajoute un dossier WoW à la liste ; toutes les installations restent disponibles dans la liste déroulante."""
+        """Add a WoW folder to the saved list; every installation stays available in the drop-down."""
         start = (self.paths[-1] if self.paths else "") or (wow.common_locations() or [""])[0]
         path = QFileDialog.getExistingDirectory(self, "Ajouter un dossier World of Warcraft", start)
         if not path:
@@ -448,9 +455,9 @@ class MainWindow(QWidget):
         else:
             self.rescan()
 
-    # ------------------------------------------------------------------ données
+    # ------------------------------------------------------------------ data
     def rescan(self):
-        """Relit les add-ons installés et les rapproche du catalogue."""
+        """Re-read the installed add-ons and match them against the catalogs."""
         if not self.flavor:
             self.rows = []
             self.populate()
@@ -466,15 +473,15 @@ class MainWindow(QWidget):
             if entry and not flavor_accepts(self.flavor.key, entry.majors):
                 entry = None
             if entry and entry.key not in records and entry.uid != item.wowi_id:
-                # Rapprochement par simple nom de dossier : on ne propose de mises à jour que si la version
-                # locale est exactement celle du catalogue (sinon c'est peut-être un autre add-on, ou un fork).
+                # Matched by folder name alone: only trust it when the local version is exactly the catalog's
+                # (otherwise it may be a different add-on or a fork).
                 if norm_version(item.version) and norm_version(item.version) == norm_version(entry.version):
                     records[entry.key] = {"version": entry.version, "folders": list(entry.folders), "name": entry.name}
                     self.manifest.save()
                 else:
                     entry = None
             if entry is None and item.curse_id:
-                # Identifiant CurseForge dans le .toc : lien explicite, donc fiable (contrairement à un nom de dossier).
+                # CurseForge project id in the .toc: an explicit link, so reliable (unlike a folder name).
                 cached = self.curse_cache.get((item.curse_id, self.flavor.key), False)
                 if cached is False:
                     pending.append(item)
@@ -482,7 +489,7 @@ class MainWindow(QWidget):
                     entry = cached
             if entry:
                 if entry.source == "curse":
-                    # Le dossier principal, ceux qui portent le même identifiant, et ses modules (Nom_Module).
+                    # The main folder, those carrying the same id, and its modules (Name_Module).
                     root = entry.folders[0].lower() if entry.folders else item.folder.lower()
                     present = [i.folder for i in installed
                                if i.curse_id == entry.uid or i.folder.lower() == root or i.folder.lower().startswith(root + "_")]
@@ -505,18 +512,18 @@ class MainWindow(QWidget):
             self.fetch_curse(pending)
 
     def fetch_curse(self, items: list):
-        """Cherche sur CurseForge la dernière version des add-ons qui portent un identifiant de projet."""
+        """Look up the latest CurseForge version of every add-on that carries a project id."""
         self._curse_busy = True
         flavor_key = self.flavor.key
         by_id: dict[int, wow.Installed] = {}
         for i in items:
-            by_id.setdefault(i.curse_id, i)   # le premier dossier (ordre alphabétique) est le principal : « Hekili », pas « Hekili_Druid »
+            by_id.setdefault(i.curse_id, i)   # first folder (alphabetical) is the main one: "Hekili", not "Hekili_Druid"
 
         def work():
             def one(pid):
                 try:
                     return pid, curse.latest_file(pid, flavor_key), True
-                except Exception:  # noqa: BLE001 - réseau ou site indisponible : on réessaiera à l'actualisation
+                except Exception:  # noqa: BLE001 - network or site down: retried on refresh
                     return pid, None, False
             with ThreadPoolExecutor(6) as pool:
                 return list(pool.map(one, by_id))
@@ -536,7 +543,8 @@ class MainWindow(QWidget):
         self.run(work, done=done)
 
     def populate(self):
-        text = self.search.text().strip()
+        # Browse mode only uses the query that was submitted, never the half-typed text.
+        text = self.query if self.mode == "browse" else self.search.text().strip()
         self.table.setUpdatesEnabled(False)
         self.table.clearContents()
         installed_uids = {r.entry.key: r for r in self.rows if r.entry}
@@ -551,7 +559,7 @@ class MainWindow(QWidget):
                 fkey = self.flavor.key if self.flavor else ""
                 found = self.catalog.search(text, fkey, self.compat.isChecked())
                 if self.curse_query == text and self.curse_hits:
-                    # Résultats CurseForge (clé API) mêlés à ceux de WoWInterface, sans doublon de nom.
+                    # CurseForge results (API key) merged with WoWInterface's, without duplicate names.
                     names = {e.name.lower() for e in found}
                     extra = [e for e in self.curse_hits if e.name.lower() not in names
                              and (not self.compat.isChecked() or flavor_accepts(fkey, e.majors))]
@@ -587,6 +595,7 @@ class MainWindow(QWidget):
         self.update_all_btn.setText(f"Tout mettre à jour ({n})" if n else "Tout mettre à jour")
         self.compat.setVisible(self.mode == "browse")
         self.curse_btn.setVisible(self.mode == "browse")
+        self.search_btn.setVisible(self.mode == "browse")
         self.key_btn.setVisible(self.mode == "browse")
         if self.shown:
             self.table.selectRow(0)
@@ -595,13 +604,17 @@ class MainWindow(QWidget):
         self.refresh_buttons()
 
     def set_mode(self, mode: str):
+        self._texts[self.mode] = self.search.text()
         self.mode = mode
+        self.search.blockSignals(True)
+        self.search.setText(self._texts[mode])
+        self.search.blockSignals(False)
         self.tab_installed.setChecked(mode == "installed")
         self.tab_browse.setChecked(mode == "browse")
-        self.search.setPlaceholderText("Rechercher un add-on…" if mode == "browse" else "Filtrer mes add-ons…")
+        self.search.setPlaceholderText("Nom d'un add-on, puis Entrée…" if mode == "browse" else "Filtrer mes add-ons…")
         self.populate()
 
-    # ------------------------------------------------------------------ détail
+    # ------------------------------------------------------------------ details
     def current(self) -> Row | None:
         rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
         if not rows or rows[0].row() >= len(self.shown):
@@ -688,31 +701,42 @@ class MainWindow(QWidget):
             QDesktopServices.openUrl(QUrl(row.entry.url))
 
     # ------------------------------------------------------------------ actions
-    def on_search(self):
-        self.populate()
-        text = self.search.text().strip()
-        key = self.manifest.get("curse_key", "")
-        if self.mode != "browse" or not key or len(text) < 2 or text == self.curse_query:
+    def run_search(self):
+        """Search the catalog for what is typed in the box (Enter or the button); nothing runs while typing."""
+        if self.mode != "browse":
             return
+        self.query = self.search.text().strip()
+        self.populate()
+        text, key = self.query, self.manifest.get("curse_key", "")
+        if not key or len(text) < 2 or text == self.curse_query:
+            return
+        self.say("Recherche sur CurseForge…")
 
         def done(results):
-            if self.search.text().strip() != text:
-                return  # la recherche a changé entre-temps
-            hits = []
-            for m in results:
-                files = m.get("latestFiles") or []
-                majors = sorted({n for f in files for n in curse._majors(f.get("gameVersions"))})
-                authors = m.get("authors") or []
-                hits.append(Entry(uid=int(m["id"]), name=str(m.get("name", "")),
-                                  author=str(authors[0].get("name", "")) if authors else "",
-                                  version=str(files[0].get("displayName", "")) if files else "",
-                                  downloads=int(m.get("downloadCount") or 0), monthly=0,
-                                  url=str((m.get("links") or {}).get("websiteUrl") or curse.PAGE_URL.format(pid=m["id"])),
-                                  folders=[], majors=majors, updated=0, source="curse"))
+            if self.query != text:
+                return  # a newer search replaced this one
+            try:
+                hits = [self._curse_entry(m) for m in results]
+            except (KeyError, TypeError, ValueError) as exc:
+                self.say(f"Réponse CurseForge illisible : {exc}")
+                return
             self.curse_hits, self.curse_query = hits, text
             self.populate()
+            self.say(f"CurseForge : {len(hits)} résultat(s) pour « {text} ».")
 
         self.run(lambda: curse.search(key, text), done=done, failed=lambda msg: self.say(msg))
+
+    @staticmethod
+    def _curse_entry(m: dict) -> Entry:
+        files = m.get("latestFiles") or []
+        majors = sorted({n for f in files for n in curse._majors(f.get("gameVersions"))})
+        authors = m.get("authors") or []
+        return Entry(uid=int(m["id"]), name=str(m.get("name", "")),
+                     author=str(authors[0].get("name", "")) if authors else "",
+                     version=str(files[0].get("displayName", "")) if files else "",
+                     downloads=int(m.get("downloadCount") or 0), monthly=0,
+                     url=str((m.get("links") or {}).get("websiteUrl") or curse.PAGE_URL.format(pid=m["id"])),
+                     folders=[], majors=majors, updated=0, source="curse")
 
     def set_curse_key(self):
         current = self.manifest.get("curse_key", "")
@@ -725,9 +749,8 @@ class MainWindow(QWidget):
         self.manifest.set("curse_key", text.strip())
         self.curse_hits, self.curse_query = [], ""
         self.refresh_key_button()
-        self.say("Clé CurseForge enregistrée : la recherche inclut CurseForge." if text.strip() else "Clé CurseForge retirée.")
+        self.say("Clé CurseForge enregistrée : lance une recherche pour inclure CurseForge." if text.strip() else "Clé CurseForge retirée.")
         self.populate()
-        self.on_search()
 
     def refresh_key_button(self):
         has = bool(self.manifest.get("curse_key", ""))

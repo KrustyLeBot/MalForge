@@ -1,11 +1,12 @@
-"""CurseForge sans compte ni clé d'API.
+"""CurseForge without an account or API key.
 
-- liste des fichiers d'un projet : l'API publique du site (par identifiant de projet) ;
-- téléchargement : le CDN public de CurseForge ;
-- infos (titre, description) et résolution d'un lien : cfwidget, un service communautaire gratuit.
+- file list of a project: the website's public API, by project id;
+- download: CurseForge's public CDN;
+- project info (title, description) and link resolution: cfwidget, a free community service.
 
-La recherche par nom n'existe pas sans clé : on retrouve donc un add-on par son identifiant
-(`## X-Curse-Project-ID` du .toc) ou par un lien de sa page.
+Searching by name is not possible without a key, so an add-on is found by its project id
+(`## X-Curse-Project-ID` in the .toc) or by a link to its page. With a free API key from
+console.curseforge.com the official search endpoint is used as well.
 """
 
 import json
@@ -27,11 +28,11 @@ PAGE_URL = "https://www.curseforge.com/projects/{pid}"
 @dataclass
 class CurseFile:
     id: int
-    name: str        # nom affiché, en général la version
+    name: str        # display name, usually the version
     file_name: str
     size: int
     majors: list
-    release: int     # 1 stable, 2 bêta, 3 alpha
+    release: int     # 1 stable, 2 beta, 3 alpha
     date: str
 
 
@@ -45,7 +46,7 @@ def _majors(versions) -> list[int]:
 
 
 def latest_file(pid: int, flavor_key: str) -> CurseFile | None:
-    """Le fichier le plus récent compatible avec cette version du jeu (les stables d'abord)."""
+    """The newest file compatible with this game version (stable releases first)."""
     data = net.get_json(FILES_URL.format(pid=pid), 20).get("data") or []
     files = [CurseFile(int(f["id"]), str(f.get("displayName") or f["fileName"]), str(f["fileName"]),
                        int(f.get("fileLength") or 0), _majors(f.get("gameVersions")),
@@ -62,8 +63,8 @@ SEARCH_URL = "https://api.curseforge.com/v1/mods/search?"
 
 
 def search(api_key: str, text: str, limit: int = 30) -> list:
-    """Recherche par nom via l'API officielle (clé gratuite, https://console.curseforge.com). Liste de dicts bruts."""
-    query = urllib.parse.urlencode({"gameId": 1, "classId": 1, "searchFilter": text, "pageSize": limit,
+    """Search by name through the official API (free key, https://console.curseforge.com). Returns raw dicts."""
+    query = urllib.parse.urlencode({"gameId": 1, "searchFilter": text, "pageSize": limit,
                                     "sortField": 2, "sortOrder": "desc"})
     req = urllib.request.Request(SEARCH_URL + query, headers={"x-api-key": api_key, "Accept": "application/json",
                                                               "User-Agent": net.USER_AGENT})
@@ -85,7 +86,7 @@ def project_info(pid: int) -> dict:
 
 
 def resolve(text: str) -> int:
-    """Identifiant d'un projet à partir d'un nombre ou d'un lien de page CurseForge."""
+    """Project id from a number or from a CurseForge page link."""
     text = text.strip()
     if text.isdigit():
         return int(text)
@@ -96,6 +97,6 @@ def resolve(text: str) -> int:
 
 
 def version_key(text: str) -> str:
-    """Le numéro de version dans un libellé (« Auctionator 341 », « v0.5.0-forever » -> « 0.5.0 »)."""
+    """The version number inside a label ("Auctionator 341", "v0.5.0-forever" -> "0.5.0")."""
     m = re.search(r"\d+(?:\.\d+)*", text or "")
     return m.group() if m else (text or "").strip().lower()

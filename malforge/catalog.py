@@ -1,4 +1,4 @@
-"""Catalogue public de WoWInterface (API mmoui, sans clé ni compte) et rapprochement avec les add-ons installés."""
+"""Public WoWInterface catalog (mmoui API, no key or account) and matching against installed add-ons."""
 
 import os
 import re
@@ -22,16 +22,16 @@ class Entry:
     monthly: int
     url: str
     folders: list
-    majors: list      # versions majeures du jeu supportées (11, 4, 1...)
-    updated: int      # ms depuis epoch
-    source: str = "wowi"   # "wowi" (WoWInterface) ou "curse" (CurseForge)
-    file_id: int = 0       # CurseForge : fichier à installer
+    majors: list      # supported game major versions (11, 4, 1...)
+    updated: int      # ms since epoch
+    source: str = "wowi"   # "wowi" (WoWInterface) or "curse" (CurseForge)
+    file_id: int = 0       # CurseForge: file to install
     file_name: str = ""
     size: int = 0
 
     @property
     def key(self) -> str:
-        """Clé de suivi dans la config : le nombre seul pour WoWInterface, préfixé pour CurseForge."""
+        """Tracking key in the config: the bare number for WoWInterface, prefixed for CurseForge."""
         return f"c{self.uid}" if self.source == "curse" else str(self.uid)
 
 
@@ -55,7 +55,7 @@ def _entry(raw: dict) -> Entry:
     )
 
 
-# Version du jeu -> numéro majeur du client (Classic Era = 1, Classic progression = 2 à 5, Retail = 8+).
+# Game version -> client major number (Classic Era = 1, Classic progression = 2 to 5, Retail = 8+).
 def flavor_accepts(key: str, majors: list) -> bool:
     if not majors:
         return True
@@ -66,7 +66,7 @@ def flavor_accepts(key: str, majors: list) -> bool:
         return 1 in majors
     if k in ("_classic_", "_classic_ptr_"):
         return any(2 <= m <= 7 for m in majors)
-    return True  # Version inconnue : on ne filtre pas.
+    return True  # Unknown flavor: no filtering.
 
 
 def norm_version(text: str) -> str:
@@ -90,7 +90,7 @@ class Catalog:
                 raw = net.get_json(LIST_URL, 60)
                 net.save_json(cache, raw)
             except OSError:
-                raw = net.load_json(cache, None)  # hors ligne : le dernier catalogue connu
+                raw = net.load_json(cache, None)  # offline: fall back to the last known catalog
                 if raw is None:
                     raise
         self.entries = [_entry(r) for r in raw if "UID" in r]
@@ -104,7 +104,7 @@ class Catalog:
         if wowi_id and wowi_id in self.by_uid:
             return self.by_uid[wowi_id]
         candidates = self.by_folder.get(folder.lower(), [])
-        # Préfère l'add-on dont c'est le dossier principal (le premier de la liste).
+        # Prefer the add-on whose main folder (first in its list) this is.
         for e in candidates:
             if e.folders and e.folders[0].lower() == folder.lower():
                 return e
@@ -120,7 +120,7 @@ class Catalog:
                 hay = f"{e.name} {e.author} {' '.join(e.folders)}".lower()
                 return all(w in hay for w in words)
             pool = [e for e in pool if hit(e)]
-            # Les noms qui commencent par la recherche passent devant, puis la popularité.
+            # Names starting with the query come first, then popularity.
             first = words[0]
             pool.sort(key=lambda e: (not e.name.lower().startswith(first), -e.downloads))
         else:

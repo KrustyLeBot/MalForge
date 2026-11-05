@@ -1,4 +1,4 @@
-"""Détection des dossiers WoW, des versions du jeu et des add-ons installés (lecture des .toc)."""
+"""Detect WoW folders, game versions and installed add-ons (by reading the .toc files)."""
 
 import os
 import re
@@ -18,10 +18,10 @@ FLAVOR_LABELS = {
 
 @dataclass
 class Flavor:
-    key: str          # nom du dossier, ex. "_retail_"
-    label: str        # nom lisible
-    path: str         # dossier de la version (contient Interface)
-    root: str = ""    # dossier choisi par l'utilisateur, d'où vient cette version
+    key: str          # folder name, e.g. "_retail_"
+    label: str        # readable name
+    path: str         # game version folder (contains Interface)
+    root: str = ""    # folder the user picked, which this version came from
 
     @property
     def addons_dir(self) -> str:
@@ -51,16 +51,15 @@ def _looks_like_flavor(path: str) -> bool:
 
 
 def detect_flavors(selected: str) -> list[Flavor]:
-    """Les versions de WoW trouvées à partir d'un dossier choisi par l'utilisateur.
+    """The WoW versions found from a folder the user picked.
 
-    Accepte la racine ("World of Warcraft"), un dossier de version ("_retail_"), ou même
-    Interface / AddOns directement.
+    Accepts the root ("World of Warcraft"), a version folder ("_retail_"), or even Interface / AddOns itself.
     """
     path = os.path.abspath(selected)
     root = path
     if not os.path.isdir(path):
         return []
-    # Remonte depuis AddOns / Interface vers le dossier de version.
+    # Walk up from AddOns / Interface to the version folder.
     for _ in range(2):
         if os.path.basename(path).lower() in ("addons", "interface"):
             path = os.path.dirname(path)
@@ -76,13 +75,13 @@ def detect_flavors(selected: str) -> list[Flavor]:
         full = os.path.join(path, name)
         if re.fullmatch(r"_[^_].*_", name) and os.path.isdir(full):
             found.append(Flavor(name, _label(name), full, root))
-    # Ordre : retail d'abord, le reste alphabétique.
+    # Order: retail first, the rest alphabetical.
     found.sort(key=lambda f: (f.key != "_retail_", f.label))
     return found
 
 
 def common_locations() -> list[str]:
-    """Emplacements habituels, pour proposer un dossier sans que l'utilisateur ait à chercher."""
+    """Usual install locations, so a folder can be suggested without the user browsing for it."""
     out = []
     for drive in "CDEFGH":
         for rel in ("World of Warcraft", r"Program Files (x86)\World of Warcraft", r"Program Files\World of Warcraft",
@@ -122,7 +121,7 @@ def _int(text: str) -> int:
 
 
 def scan_addons(flavor: Flavor) -> list[Installed]:
-    """Les add-ons présents dans Interface/AddOns (un dossier = une entrée)."""
+    """The add-ons present in Interface/AddOns (one folder = one entry)."""
     root = flavor.addons_dir
     if not os.path.isdir(root):
         return []
@@ -133,7 +132,7 @@ def scan_addons(flavor: Flavor) -> list[Installed]:
             continue
         toc = os.path.join(folder, name + ".toc")
         if not os.path.exists(toc):
-            # Certains add-ons ont un suffixe de version (Nom_Mainline.toc, Nom-Classic.toc).
+            # Some add-ons use a flavor suffix (Name_Mainline.toc, Name-Classic.toc).
             tocs = [f for f in os.listdir(folder) if f.lower().endswith(".toc")]
             if not tocs:
                 continue

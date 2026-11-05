@@ -1,7 +1,7 @@
 name: release
 
-# Un push sur main qui change la version (malforge/__init__.py) construit MalForge.exe sur GitHub
-# et publie une release vX.Y.Z. C'est cette release que l'auto-update de l'app lit.
+# A push to main builds MalForge.exe on GitHub and publishes a release vX.Y.Z when that version has no
+# release yet (bump __version__ in malforge/__init__.py). The app's self-update reads that release.
 on:
   push:
     branches: [main]
