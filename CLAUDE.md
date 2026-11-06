@@ -12,8 +12,8 @@ Only what the user sees in the interface (labels, messages, dialogs, tooltips) i
   folder the user picked, and reads installed add-ons in `Interface/AddOns` (`.toc` files). Several folders can be saved.
 - `malforge/catalog.py`: public WoWInterface catalog (`api.mmoui.com`, no key), cached 6 h in `%APPDATA%\MalForge`.
   Searched locally; it runs only on Enter or on the search button, never while typing.
-- `malforge/curse.py`: CurseForge without a key: website file list, public CDN, cfwidget for project info and for
-  finding a project from the typed name (slug guesses like `hekili-forever`). CurseForge's own search API is not used
+- `malforge/curse.py`: CurseForge without a key: search, slug lookup and descriptions through the api.curse.tools relay,
+  website file list, public CDN, cfwidget as a fallback (slug guesses like `hekili-forever`). CurseForge's own search API is not used
   (needs a key; some keys get 403 on it).
 - `malforge/github.py`: latest GitHub release of a repo and the zip that fits the game version (BigWigs `release.json`).
 - `malforge/installer.py`: download, MD5/size check, safe extraction, replacement with rollback, tracking of installs

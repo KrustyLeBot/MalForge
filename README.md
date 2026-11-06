@@ -18,7 +18,8 @@ Download `MalForge.exe` from the [latest release](../../releases/latest).
 |---|---|
 | WoWInterface (`api.mmoui.com`) | full catalog, searched locally; install and update |
 | CurseForge website file list + public CDN | update and install add-ons linked by id or page; page links |
-| cfwidget (`api.cfwidget.com`) | CurseForge project info; finding a project from the typed name (page slug) |
+| api.curse.tools (public relay of the CurseForge API) | CurseForge search by name, lookup by page link, descriptions |
+| cfwidget (`api.cfwidget.com`) | fallback when the relay is down: project info and guessed page slugs |
 | GitHub releases | update and install add-ons whose `.toc` or pasted link points to a repository that publishes a zip |
 
 CurseForge's own search API is not used: it needs a key and refuses some keys.

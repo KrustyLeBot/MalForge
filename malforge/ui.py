@@ -561,7 +561,7 @@ class MainWindow(QWidget):
                         return ref, None
                     return ref, Entry(uid=0, version=rel.tag, url=f"https://github.com/{value}", source="github",
                                       repo=value, file_name=rel.asset_name, size=rel.size, **base)
-                pid = value if kind == "c" else int(curse.project_info(f"wow/addons/{value}")["id"])
+                pid = value if kind == "c" else curse.id_from_slug(value)
                 cf = curse.latest_file(pid, flavor_key)
                 if cf is None:
                     return ref, None
@@ -603,7 +603,10 @@ class MainWindow(QWidget):
                     names = {e.name.lower() for e in found}
                     extra = [e for e in self.curse_hits if e.name.lower() not in names
                              and (not self.compat.isChecked() or flavor_accepts(fkey, e.majors))]
-                    found = sorted(found + extra, key=lambda e: -e.downloads)
+                    found = found + extra
+                low = text.lower()
+                # Exact name first, then names starting with the query, then the most downloaded.
+                found = sorted(found, key=lambda e: (e.name.lower() != low, not e.name.lower().startswith(low), -e.downloads)) if low else found
                 self.shown = [installed_uids.get(e.key) or Row(e.name, "", e.version, UNTRACKED, e) for e in found]
             heads = ["Add-on", "Auteur", "Version", "Téléchargements"]
         self.table.setHorizontalHeaderLabels(heads)
@@ -689,7 +692,8 @@ class MainWindow(QWidget):
             if e.key in self._details:
                 self.set_description(e.key, row)
             else:
-                fetch = (lambda uid=e.uid: curse.project_info(uid)) if e.source == "curse" else (lambda uid=e.uid: Catalog.details(uid))
+                fetch = ((lambda uid=e.uid: {"description": curse.description(uid)}) if e.source == "curse"
+                         else (lambda uid=e.uid: Catalog.details(uid)))
                 self.run(fetch, done=lambda d, k=e.key: self.on_details(k, d), failed=lambda _: None)
         self.refresh_buttons()
 
@@ -703,7 +707,7 @@ class MainWindow(QWidget):
         detail = self._details[key]
         folders = ", ".join(row.folders)
         if row.entry.source == "curse":
-            html = str(detail.get("description") or detail.get("summary") or "")[:8000]
+            html = str(detail.get("description") or "")[:8000]
             self.d_text.setHtml((html or "<i>Pas de description.</i>") + (f"<hr><i>Dossiers : {folders}</i>" if folders else ""))
             return
         text = str(detail.get("UIDescription") or "")[:6000]
@@ -753,10 +757,10 @@ class MainWindow(QWidget):
             return
         self.say("Recherche sur CurseForge…")
 
-        def done(infos):
+        def done(hits):
             if self.query != text:
                 return  # a newer search replaced this one
-            self.curse_hits = [self._widget_entry(i) for i in infos]
+            self.curse_hits = [self._hit_entry(h) for h in hits]
             self.curse_query = text
             self.populate()
             if self.curse_hits:
@@ -767,18 +771,10 @@ class MainWindow(QWidget):
         self.run(lambda: curse.find_by_name(text), done=done, failed=lambda msg: self.say(msg))
 
     @staticmethod
-    def _widget_entry(info: dict) -> Entry:
-        """A search entry from a cfwidget project record."""
-        files = info.get("files") or []
-        stable = next((f for f in files if f.get("type") == "release"), None) or (files[0] if files else {})
-        members = info.get("members") or []
-        downloads = info.get("downloads") or {}
-        return Entry(uid=int(info["id"]), name=str(info.get("title", "")),
-                     author=str(members[0].get("username", "")) if members else "",
-                     version=str(stable.get("display") or stable.get("name") or ""),
-                     downloads=int(downloads.get("total") or 0), monthly=int(downloads.get("monthly") or 0),
-                     url=str((info.get("urls") or {}).get("curseforge") or curse.PAGE_URL.format(pid=info["id"])),
-                     folders=[], majors=[], updated=0, source="curse")
+    def _hit_entry(hit: "curse.Hit") -> Entry:
+        """A search-result entry from a CurseForge project."""
+        return Entry(uid=hit.id, name=hit.name, author=hit.author, version=hit.version, downloads=hit.downloads,
+                     monthly=0, url=hit.url, folders=[], majors=[], updated=0, source="curse")
 
     def add_curse_link(self):
         """Install an add-on from the link of its CurseForge page or of its GitHub repository."""
@@ -805,8 +801,8 @@ class MainWindow(QWidget):
             cf = curse.latest_file(pid, flavor_key)
             if cf is None:
                 raise OSError("Aucun fichier compatible avec cette version du jeu.")
-            info = curse.project_info(pid)
-            return Entry(uid=pid, name=str(info.get("title") or f"Projet {pid}"), author="", version=cf.name,
+            hit = curse.mod(pid)
+            return Entry(uid=pid, name=hit.name or f"Projet {pid}", author=hit.author, version=cf.name,
                          downloads=0, monthly=0, url=curse.PAGE_URL.format(pid=pid), folders=[], majors=[], updated=0,
                          source="curse", file_id=cf.id, file_name=cf.file_name, size=cf.size)
 
