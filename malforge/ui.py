@@ -599,11 +599,14 @@ class MainWindow(QWidget):
                 fkey = self.flavor.key if self.flavor else ""
                 found = self.catalog.search(text, fkey, self.compat.isChecked())
                 if self.curse_query == text and self.curse_hits:
-                    # CurseForge results (API key) merged with WoWInterface's, without duplicate names.
-                    names = {e.name.lower() for e in found}
-                    extra = [e for e in self.curse_hits if e.name.lower() not in names
-                             and (not self.compat.isChecked() or flavor_accepts(fkey, e.majors))]
-                    found = found + extra
+                    # Merge both catalogs; when an add-on is in both, keep the one with the most downloads.
+                    best: dict[str, Entry] = {}
+                    for e in found + [h for h in self.curse_hits
+                                      if not self.compat.isChecked() or flavor_accepts(fkey, h.majors)]:
+                        key = e.name.lower()
+                        if key not in best or e.downloads > best[key].downloads:
+                            best[key] = e
+                    found = list(best.values())
                 low = text.lower()
                 # Exact name first, then names starting with the query, then the most downloaded.
                 found = sorted(found, key=lambda e: (e.name.lower() != low, not e.name.lower().startswith(low), -e.downloads)) if low else found
