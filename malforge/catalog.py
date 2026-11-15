@@ -67,7 +67,7 @@ def flavor_accepts(key: str, majors: list) -> bool:
         return any(m >= 8 for m in majors)
     if k == "_classic_era_":
         return 1 in majors
-    if k in ("_classic_", "_classic_ptr_"):
+    if k in ("_classic_", "_classic_ptr_", "_forever_"):
         return any(2 <= m <= 7 for m in majors)
     return True  # Unknown flavor: no filtering.
 

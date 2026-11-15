@@ -53,6 +53,8 @@ def _majors(versions) -> list[int]:
         m = re.match(r"(\d+)\.", str(v))
         if m:
             out.append(int(m.group(1)))
+        elif str(v).strip().lower() == "retail":
+            out.append(11)
     return out
 
 

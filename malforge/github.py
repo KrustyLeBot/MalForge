@@ -14,6 +14,7 @@ FLAVORS = {
     "_ptr_": {"mainline"},
     "_classic_era_": {"classic"},
     "_classic_": {"mists", "cata", "wrath", "bcc", "classic"},
+    "_forever_": {"mists", "cata", "wrath", "bcc", "classic"},
 }
 
 
