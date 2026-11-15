@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from . import net
-from .catalog import flavor_accepts
+from .catalog import FOREVER_MAJOR, flavor_accepts
 
 RELAY = "https://api.curse.tools/v1/cf/"
 FILES_URL = "https://www.curseforge.com/api/v1/mods/{pid}/files"
@@ -50,9 +50,11 @@ class Hit:
 def _majors(versions) -> list[int]:
     out = []
     for v in versions or []:
-        m = re.match(r"(\d+)\.", str(v))
+        m = re.match(r"(\d+)\.(\d+)", str(v))
         if m:
-            out.append(int(m.group(1)))
+            major, minor = int(m.group(1)), int(m.group(2))
+            # Forever versions look like 1.60.1; Classic Era is 1.14 / 1.15.
+            out.append(FOREVER_MAJOR if major == 1 and minor >= 60 else major)
         elif str(v).strip().lower() == "retail":
             out.append(11)
     return out

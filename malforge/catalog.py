@@ -58,16 +58,20 @@ def _entry(raw: dict) -> Entry:
     )
 
 
-# Game version -> client major number (Classic Era = 1, Classic progression = 2 to 5, Retail = 8+).
+# Game version -> client major number (Classic Era = 1, Classic progression = 2 to 5, Retail = 8 to 99).
+# Forever has its own game versions (1.60.x on CurseForge), tagged FOREVER_MAJOR by curse._majors.
+FOREVER_MAJOR = 100
 def flavor_accepts(key: str, majors: list) -> bool:
     if not majors:
         return True
     k = key.lower()
     if k in ("_retail_", "_ptr_", "_xptr_", "_beta_"):
-        return any(m >= 8 for m in majors)
+        return any(8 <= m < FOREVER_MAJOR for m in majors)
     if k == "_classic_era_":
         return 1 in majors
-    if k in ("_classic_", "_classic_ptr_", "_forever_"):
+    if k == "_forever_":
+        return FOREVER_MAJOR in majors or any(2 <= m <= 7 for m in majors)
+    if k in ("_classic_", "_classic_ptr_"):
         return any(2 <= m <= 7 for m in majors)
     return True  # Unknown flavor: no filtering.
 
